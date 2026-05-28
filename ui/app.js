@@ -74,7 +74,7 @@ async function renderHome() {
     if (!ms.length) list.appendChild(el("div", {class:"empty"}, "no mindsets yet"));
     for (const m of ms) {
       list.appendChild(el("a", {href: `#/mindset/${m.id}`},
-        el("div", {}, m.name),
+        el("div", {class:"name"}, m.name),
         el("div", {class:"theme"}, `${m.theme} · v${m.version}${m.dossier ? " · researched" : ""}`),
       ));
     }
