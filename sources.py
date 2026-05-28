@@ -26,6 +26,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://unsplash.com/license",
         "attribution_template": "Photo by {creator} on Unsplash",
         "rights_status_default": "clear",
+        "requires_env": ["UNSPLASH_ACCESS_KEY"],
     },
     "pexels": {
         "display_name": "Pexels", "kind": "stock", "hotlink_ok": True,
@@ -33,6 +34,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.pexels.com/license/",
         "attribution_template": "Photo by {creator} from Pexels",
         "rights_status_default": "clear",
+        "requires_env": ["PEXELS_API_KEY"],
     },
     "pixabay": {
         "display_name": "Pixabay", "kind": "stock", "hotlink_ok": True,
@@ -40,6 +42,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://pixabay.com/service/license-summary/",
         "attribution_template": "Image by {creator} from Pixabay",
         "rights_status_default": "clear",
+        "requires_env": ["PIXABAY_API_KEY"],
     },
     "met": {
         "display_name": "The Met", "kind": "museum", "hotlink_ok": True,
@@ -61,6 +64,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.europeana.eu/en/rights",
         "attribution_template": "{title} — {creator} ({provider})",
         "rights_status_default": "caveat",
+        "requires_env": ["EUROPEANA_API_KEY"],
     },
     "nasa": {
         "display_name": "NASA", "kind": "museum", "hotlink_ok": True,
@@ -82,6 +86,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": None,
         "attribution_template": "via {source_host}",
         "rights_status_default": "unknown",
+        "requires_env": ["GOOGLE_CSE_API_KEY", "GOOGLE_CSE_CX"],
     },
     "vertex_search": {
         "display_name": "Vertex AI Search", "kind": "web", "hotlink_ok": False,
@@ -89,6 +94,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": None,
         "attribution_template": "via {source_host}",
         "rights_status_default": "unknown",
+        "requires_env": ["GOOGLE_CLOUD_PROJECT", "GOOGLE_VERTEX_SEARCH_APP_ID"],
     },
     "serpapi": {
         "display_name": "Web search", "kind": "web", "hotlink_ok": False,
@@ -96,6 +102,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": None,
         "attribution_template": "via {source_host}",
         "rights_status_default": "unknown",
+        "requires_env": ["SERPAPI_API_KEY"],
     },
     "evident_ioty": {
         "display_name": "Evident IOTY", "kind": "competition", "hotlink_ok": True,
@@ -110,8 +117,21 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.nikonsmallworld.com/about-us/copyright",
         "attribution_template": "{title} — {creator}, Nikon Small World {year}",
         "rights_status_default": "caveat",
+        "stub": True,
     },
 }
+
+
+def source_ready(sid: str) -> Tuple[bool, str]:
+    meta = SOURCE_REGISTRY.get(sid)
+    if not meta:
+        return False, "unknown source"
+    if meta.get("stub"):
+        return False, "not implemented yet"
+    missing = [k for k in meta.get("requires_env") or [] if not os.environ.get(k)]
+    if missing:
+        return False, "missing env: " + ", ".join(missing)
+    return True, ""
 
 
 def _candidate(mindset_id: str, source_id: str, image_url: str, source_page_url: str, **extra) -> Candidate:

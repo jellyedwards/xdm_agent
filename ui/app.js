@@ -35,7 +35,12 @@ async function refreshHealth() {
   try {
     const h = await api.get("/health");
     SOURCES = await api.get("/sources");
-    $health.textContent = `${h.sources.length} sources online`;
+    const ready = h.ready?.length ?? 0;
+    const total = h.sources?.length ?? 0;
+    const unavail = h.unavailable || {};
+    const tip = Object.entries(unavail).map(([sid, why]) => `${sid}: ${why}`).join("\n") || "all sources ready";
+    $health.textContent = `${ready} / ${total} sources ready`;
+    $health.title = tip;
   } catch { $health.textContent = "offline"; }
 }
 

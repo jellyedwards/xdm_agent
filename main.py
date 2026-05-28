@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from storage import Mindset, Candidate, FeedbackEvent, Hunt, get_store, now_iso, new_id
 from rubric import initialise_mindset_rubric, reflect_rubric, record_feedback, default_tactic_prefs
 from agents import run_hunt, plan_hunt, build_adk_agents, build_dossier, initialise_mindset_full
-from sources import SOURCE_REGISTRY
+from sources import SOURCE_REGISTRY, source_ready
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -77,12 +77,32 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "ts": now_iso(), "sources": list(SOURCE_REGISTRY.keys())}
+    sids = list(SOURCE_REGISTRY.keys())
+    readiness = {sid: source_ready(sid) for sid in sids}
+    ready = [sid for sid, (ok, _) in readiness.items() if ok]
+    unavailable = {sid: reason for sid, (ok, reason) in readiness.items() if not ok}
+    return {
+        "ok": True,
+        "ts": now_iso(),
+        "sources": sids,
+        "ready": ready,
+        "unavailable": unavailable,
+    }
 
 
 @app.get("/sources")
 def sources_meta():
-    return {sid: {"display_name": meta.get("display_name", sid), "kind": meta.get("kind"), "license_default": meta.get("license_default")} for sid, meta in SOURCE_REGISTRY.items()}
+    out = {}
+    for sid, meta in SOURCE_REGISTRY.items():
+        ok, reason = source_ready(sid)
+        out[sid] = {
+            "display_name": meta.get("display_name", sid),
+            "kind": meta.get("kind"),
+            "license_default": meta.get("license_default"),
+            "ready": ok,
+            "unavailable_reason": reason,
+        }
+    return out
 
 
 @app.post("/mindset")
