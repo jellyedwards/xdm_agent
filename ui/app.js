@@ -198,6 +198,12 @@ function summarizeItems(items, max = 3) {
   return arr.slice(0, max).join(", ") + (arr.length > max ? ", …" : "");
 }
 
+function truncate(s, limit) {
+  if (!s) return "";
+  s = String(s).trim();
+  return s.length > limit ? s.slice(0, limit).trimEnd() + "…" : s;
+}
+
 function renderDossier(id, m) {
   const sec = document.getElementById("dossier-sec");
   sec.replaceChildren();
@@ -295,12 +301,12 @@ function renderTile(c) {
   if (c.is_new) t.appendChild(el("div", {class:"new-badge"}, "NEW"));
   t.appendChild(el("img", {src: c.thumbnail_url || c.image_url, loading: "lazy", referrerpolicy: "no-referrer"}));
   t.appendChild(el("div", {class:"meta"},
-    el("div", {class:"title"}, c.title || "(untitled)"),
+    el("div", {class:"title"}, truncate(c.title || "(untitled)", 90)),
     el("div", {class:"src"}, `${sourceName(c.source_id)} · ${c.creator || "unknown"}`),
     el("div", {class:"score"}, c.judge_score != null ? `score ${c.judge_score.toFixed(1)}` : "unscored"),
-    el("div", {class:"theme", style:"margin-top:4px;font-style:italic"}, c.judge_reason ? `“${c.judge_reason.slice(0,120)}”` : ""),
+    el("div", {class:"reason"}, c.judge_reason ? `“${truncate(c.judge_reason, 140)}”` : ""),
     el("div", {style:"margin-top:6px"}, el("span", {class: "pill " + rights.cls, title: rights.title}, rights.text)),
-    el("div", {class:"theme", style:"margin-top:4px"}, c.attribution || ""),
+    el("div", {class:"attribution"}, c.attribution || ""),
   ));
   t.appendChild(el("div", {class:"actions"},
     el("button", {class: liked ? "like-on" : "", onClick: () => fb(c, liked ? "unlike" : "like")}, liked ? "♥ liked" : "♡ like"),
