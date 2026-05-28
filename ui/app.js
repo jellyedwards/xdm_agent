@@ -1,5 +1,4 @@
 const $app = document.getElementById("app");
-const $health = document.getElementById("health");
 
 const api = {
   async get(p) { const r = await fetch(p); if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.json(); },
@@ -33,15 +32,9 @@ function sourceName(id) { return (SOURCES[id] && SOURCES[id].display_name) || id
 
 async function refreshHealth() {
   try {
-    const h = await api.get("/health");
+    await api.get("/health");
     SOURCES = await api.get("/sources");
-    const ready = h.ready?.length ?? 0;
-    const total = h.sources?.length ?? 0;
-    const unavail = h.unavailable || {};
-    const tip = Object.entries(unavail).map(([sid, why]) => `${sid}: ${why}`).join("\n") || "all sources ready";
-    $health.textContent = `${ready} / ${total} sources ready`;
-    $health.title = tip;
-  } catch { $health.textContent = "offline"; }
+  } catch {}
 }
 
 function route() {
@@ -199,6 +192,12 @@ function firstSentence(s, limit = 90) {
   return text;
 }
 
+function summarizeItems(items, max = 3) {
+  const arr = items || [];
+  if (!arr.length) return "";
+  return arr.slice(0, max).join(", ") + (arr.length > max ? ", …" : "");
+}
+
 function renderDossier(id, m) {
   const sec = document.getElementById("dossier-sec");
   sec.replaceChildren();
@@ -217,21 +216,21 @@ function renderDossier(id, m) {
   if (d.visual_markers && d.visual_markers.length) {
     groups.push(dossierSection(
       "visual hallmarks",
-      `${d.visual_markers.length} markers`,
+      summarizeItems(d.visual_markers),
       [el("div", {class:"pill-row"}, ...d.visual_markers.map(v => el("span", {class:"pill"}, v)))],
     ));
   }
   if (d.subgenres && d.subgenres.length) {
     groups.push(dossierSection(
       "subgenres",
-      d.subgenres.map(s => s.name).join(", "),
+      summarizeItems(d.subgenres.map(s => s.name)),
       d.subgenres.map(s => el("div", {class:"item"}, el("b", {}, s.name), s.description ? " — " + s.description : "")),
     ));
   }
   if (d.competitions && d.competitions.length) {
     groups.push(dossierSection(
       "competitions & showcases",
-      d.competitions.map(c => c.name).join(", "),
+      summarizeItems(d.competitions.map(c => c.name)),
       d.competitions.map(c => el("div", {class:"item"},
         c.url ? el("a", {href:c.url, target:"_blank", rel:"noopener"}, c.name) : el("b", {}, c.name),
         c.description ? el("span", {class:"why"}, " — " + c.description) : "",
@@ -241,7 +240,7 @@ function renderDossier(id, m) {
   if (d.galleries_and_archives && d.galleries_and_archives.length) {
     groups.push(dossierSection(
       "galleries & archives",
-      d.galleries_and_archives.map(g => g.name).join(", "),
+      summarizeItems(d.galleries_and_archives.map(g => g.name)),
       d.galleries_and_archives.map(g => el("div", {class:"item"},
         g.url ? el("a", {href:g.url, target:"_blank", rel:"noopener"}, g.name) : el("b", {}, g.name),
       )),
@@ -250,21 +249,21 @@ function renderDossier(id, m) {
   if (d.canonical_creators && d.canonical_creators.length) {
     groups.push(dossierSection(
       "canonical creators",
-      d.canonical_creators.map(c => c.name).join(", "),
+      summarizeItems(d.canonical_creators.map(c => c.name)),
       d.canonical_creators.map(c => el("div", {class:"item"}, el("b", {}, c.name), c.why_notable ? el("span", {class:"why"}, " — " + c.why_notable) : "")),
     ));
   }
   if (d.adjacent_themes && d.adjacent_themes.length) {
     groups.push(dossierSection(
       "adjacent themes",
-      d.adjacent_themes.join(", "),
+      summarizeItems(d.adjacent_themes),
       [el("div", {class:"pill-row"}, ...d.adjacent_themes.map(t => el("span", {class:"pill"}, t)))],
     ));
   }
   if (d.suggested_queries && d.suggested_queries.length) {
     groups.push(dossierSection(
       "queries the agent will try",
-      `${d.suggested_queries.length} evocative queries`,
+      summarizeItems(d.suggested_queries),
       [el("div", {class:"pill-row"}, ...d.suggested_queries.map(q => el("span", {class:"pill"}, q)))],
     ));
   }
