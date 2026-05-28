@@ -186,14 +186,59 @@ textarea { border-radius: 16px; resize: vertical; }
 .pill.good { background: rgba(48, 176, 199, 0.10); color: var(--accent); border-color: rgba(48, 176, 199, 0.30); }
 .pill[title] { cursor: help; }
 
-.dossier { display: grid; gap: 16px; }
-.dossier .summary { font-size: 14px; line-height: 1.6; color: var(--ink); }
-.dossier .dossier-group { display: grid; gap: 8px; }
-.dossier .dossier-group h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin: 0; font-weight: 700; }
+.dossier { display: grid; gap: 4px; }
+.dossier .summary { font-size: 14px; line-height: 1.6; color: var(--ink); margin-bottom: 12px; }
 .dossier .pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .dossier .item { font-size: 13px; line-height: 1.5; }
 .dossier .item b { font-weight: 700; }
 .dossier .item .why { color: var(--muted); }
+
+details.dossier-collapsible { border: none; border-top: 1px solid var(--border); padding: 0; }
+details.dossier-collapsible:first-of-type { border-top: none; }
+details.dossier-collapsible > summary {
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 0;
+  cursor: pointer;
+  user-select: none;
+  color: var(--ink);
+}
+details.dossier-collapsible > summary::-webkit-details-marker { display: none; }
+details.dossier-collapsible > summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 10px;
+  width: 12px;
+  flex-shrink: 0;
+  transition: transform .15s ease;
+}
+details.dossier-collapsible[open] > summary::before { content: "▾"; }
+details.dossier-collapsible > summary:hover .dossier-label { color: var(--accent); }
+details.dossier-collapsible .dossier-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  font-weight: 700;
+  white-space: nowrap;
+  transition: color .12s ease;
+}
+details.dossier-collapsible .dossier-preview {
+  font-size: 13px;
+  color: var(--ink);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+details.dossier-collapsible > .dossier-body {
+  padding: 4px 0 14px 24px;
+  display: grid;
+  gap: 8px;
+}
 
 .rubric {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -251,6 +296,6 @@ details[open] > summary { margin-bottom: 12px; }
   <span class="status" id="health"></span>
 </header>
 <main id="app"></main>
-<script src="/ui/app.js?v=9"></script>
+<script src="/ui/app.js?v=10"></script>
 </body>
 </html>

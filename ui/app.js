@@ -174,6 +174,26 @@ async function reloadMindset(id) {
   } catch (e) { alert(`reload failed: ${e.message}`); }
 }
 
+function dossierSection(label, preview, body) {
+  const det = el("details", {class:"dossier-collapsible"});
+  const sum = el("summary", {},
+    el("span", {class:"dossier-label"}, label),
+    preview ? el("span", {class:"dossier-preview"}, preview) : null,
+  );
+  det.appendChild(sum);
+  const bod = el("div", {class:"dossier-body"});
+  body.forEach(c => bod.appendChild(c));
+  det.appendChild(bod);
+  return det;
+}
+
+function firstSentence(s, limit = 90) {
+  const m = (s || "").match(/^[^.!?]+[.!?]?/);
+  let text = (m ? m[0] : (s || "")).trim();
+  if (text.length > limit) text = text.slice(0, limit - 1).trimEnd() + "…";
+  return text;
+}
+
 function renderDossier(id, m) {
   const sec = document.getElementById("dossier-sec");
   sec.replaceChildren();
@@ -188,57 +208,69 @@ function renderDossier(id, m) {
   }
   const groups = [];
   if (d.summary) groups.push(el("div", {class:"summary"}, d.summary));
+
   if (d.visual_markers && d.visual_markers.length) {
-    groups.push(el("div", {class:"dossier-group"},
-      el("h3", {}, "visual hallmarks"),
-      el("div", {class:"pill-row"}, ...d.visual_markers.map(v => el("span", {class:"pill"}, v))),
+    groups.push(dossierSection(
+      "visual hallmarks",
+      `${d.visual_markers.length} markers`,
+      [el("div", {class:"pill-row"}, ...d.visual_markers.map(v => el("span", {class:"pill"}, v)))],
     ));
   }
   if (d.subgenres && d.subgenres.length) {
-    groups.push(el("div", {class:"dossier-group"},
-      el("h3", {}, "subgenres"),
-      ...d.subgenres.map(s => el("div", {class:"item"}, el("b", {}, s.name), s.description ? " — " + s.description : "")),
+    groups.push(dossierSection(
+      "subgenres",
+      d.subgenres.map(s => s.name).join(", "),
+      d.subgenres.map(s => el("div", {class:"item"}, el("b", {}, s.name), s.description ? " — " + s.description : "")),
     ));
   }
   if (d.competitions && d.competitions.length) {
-    groups.push(el("div", {class:"dossier-group"},
-      el("h3", {}, "competitions & showcases"),
-      ...d.competitions.map(c => el("div", {class:"item"},
+    groups.push(dossierSection(
+      "competitions & showcases",
+      d.competitions.map(c => c.name).join(", "),
+      d.competitions.map(c => el("div", {class:"item"},
         c.url ? el("a", {href:c.url, target:"_blank", rel:"noopener"}, c.name) : el("b", {}, c.name),
         c.description ? el("span", {class:"why"}, " — " + c.description) : "",
       )),
     ));
   }
   if (d.galleries_and_archives && d.galleries_and_archives.length) {
-    groups.push(el("div", {class:"dossier-group"},
-      el("h3", {}, "galleries & archives"),
-      ...d.galleries_and_archives.map(g => el("div", {class:"item"},
+    groups.push(dossierSection(
+      "galleries & archives",
+      d.galleries_and_archives.map(g => g.name).join(", "),
+      d.galleries_and_archives.map(g => el("div", {class:"item"},
         g.url ? el("a", {href:g.url, target:"_blank", rel:"noopener"}, g.name) : el("b", {}, g.name),
       )),
     ));
   }
   if (d.canonical_creators && d.canonical_creators.length) {
-    groups.push(el("div", {class:"dossier-group"},
-      el("h3", {}, "canonical creators"),
-      ...d.canonical_creators.map(c => el("div", {class:"item"}, el("b", {}, c.name), c.why_notable ? el("span", {class:"why"}, " — " + c.why_notable) : "")),
+    groups.push(dossierSection(
+      "canonical creators",
+      d.canonical_creators.map(c => c.name).join(", "),
+      d.canonical_creators.map(c => el("div", {class:"item"}, el("b", {}, c.name), c.why_notable ? el("span", {class:"why"}, " — " + c.why_notable) : "")),
     ));
   }
   if (d.adjacent_themes && d.adjacent_themes.length) {
-    groups.push(el("div", {class:"dossier-group"},
-      el("h3", {}, "adjacent themes"),
-      el("div", {class:"pill-row"}, ...d.adjacent_themes.map(t => el("span", {class:"pill"}, t))),
+    groups.push(dossierSection(
+      "adjacent themes",
+      d.adjacent_themes.join(", "),
+      [el("div", {class:"pill-row"}, ...d.adjacent_themes.map(t => el("span", {class:"pill"}, t)))],
     ));
   }
   if (d.suggested_queries && d.suggested_queries.length) {
-    groups.push(el("div", {class:"dossier-group"},
-      el("h3", {}, "queries the agent will try"),
-      el("div", {class:"pill-row"}, ...d.suggested_queries.map(q => el("span", {class:"pill"}, q))),
+    groups.push(dossierSection(
+      "queries the agent will try",
+      `${d.suggested_queries.length} evocative queries`,
+      [el("div", {class:"pill-row"}, ...d.suggested_queries.map(q => el("span", {class:"pill"}, q)))],
     ));
   }
   if (d.cultural_context) {
-    groups.push(el("details", {}, el("summary", {}, "cultural / artistic context"), el("div", {class:"summary"}, d.cultural_context)));
+    groups.push(dossierSection(
+      "cultural / artistic context",
+      firstSentence(d.cultural_context),
+      [el("div", {class:"summary"}, d.cultural_context)],
+    ));
   }
-  groups.push(el("div", {style:"margin-top:4px"},
+  groups.push(el("div", {style:"margin-top:14px"},
     el("button", {onClick: () => buildDossier(id)}, "↻ refresh dossier"),
   ));
   sec.appendChild(el("div", {class:"card dossier"}, ...groups));
