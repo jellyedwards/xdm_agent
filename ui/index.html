@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>xdm_agent</title>
+<style>
+:root { --bg:#0e0f12; --card:#1a1c22; --ink:#e7e9ee; --muted:#8b8f9b; --accent:#9af7a1; --warn:#ffbb55; --bad:#ff7777; --like:#ff5e8a; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--ink); }
+header { padding: 18px 24px; border-bottom: 1px solid #23252d; display:flex; align-items:center; gap:16px; }
+header h1 { margin:0; font-size:18px; font-weight:600; letter-spacing:0.2px; }
+header .muted { color: var(--muted); font-size: 13px; }
+main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+section { margin-bottom: 28px; }
+section h2 { font-size:14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 12px; }
+.card { background: var(--card); border-radius: 10px; padding: 16px; margin-bottom: 10px; border: 1px solid #23252d; }
+.row { display:flex; gap:12px; align-items:center; }
+button, input, textarea, select { font: inherit; }
+button { background: #2a2d36; color: var(--ink); border: 1px solid #383b46; border-radius: 6px; padding: 7px 12px; cursor: pointer; transition: all .15s ease; }
+button.primary { background: var(--accent); color: #0e0f12; border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad); }
+button:hover { filter: brightness(1.1); }
+input[type=text], textarea, select { background:#0e0f12; color: var(--ink); border:1px solid #383b46; border-radius:6px; padding:8px 10px; width: 100%; }
+.mindset-list a { display:block; padding: 14px 16px; background: var(--card); border-radius:10px; text-decoration:none; color:inherit; margin-bottom:8px; border:1px solid #23252d; }
+.mindset-list a:hover { border-color: #444956; }
+.mindset-list .theme { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.tile { background: var(--card); border-radius: 8px; overflow:hidden; border:1px solid #23252d; display:flex; flex-direction:column; position:relative; transition: border-color .2s ease, box-shadow .2s ease; }
+.tile.liked { border-color: var(--like); box-shadow: 0 0 0 1px var(--like), 0 6px 22px rgba(255, 94, 138, 0.18); }
+.tile.liked::after { content:"♥"; position:absolute; top:8px; right:8px; background: var(--like); color: white; width: 24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.4); pointer-events: none; }
+.tile .new-badge { position:absolute; top:8px; left:8px; background: var(--accent); color: #0e0f12; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px; letter-spacing: 0.5px; pointer-events: none; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+.tile img { width:100%; height: 200px; object-fit: cover; display:block; background:#0a0b0e; }
+.tile .meta { padding:10px; font-size: 12px; line-height: 1.4; }
+.tile .meta .title { font-weight: 600; color: var(--ink); }
+.tile .meta .src { color: var(--muted); margin-top: 3px; }
+.tile .meta .score { color: var(--accent); margin-top: 4px; font-weight:600; }
+.tile .actions { display:flex; gap:6px; padding: 8px 10px; border-top:1px solid #23252d; }
+.tile .actions button { flex:1; font-size: 12px; padding: 5px 8px; }
+.tile .actions button.like-on { background: var(--like); border-color: var(--like); color: white; }
+.pill { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: #2a2d36; color: var(--muted); margin-right: 4px; }
+.pill.warn { background: rgba(255, 187, 85, 0.15); color: var(--warn); }
+.pill.good { background: rgba(154, 247, 161, 0.15); color: var(--accent); }
+.pill[title] { cursor: help; }
+.rubric { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; background: #0a0b0e; padding: 12px; border-radius: 6px; border: 1px solid #23252d; max-height: 360px; overflow:auto; }
+.trace { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; }
+.trace .step { padding: 3px 10px; border-left: 2px solid #383b46; margin-left: 6px; color: var(--ink); }
+.trace .step.sub { color: var(--muted); border-left-color: #2a2d36; padding-left: 22px; }
+.trace .step.done { color: var(--accent); }
+.trace .step.err { color: var(--bad); }
+.trace .step.warn { color: var(--warn); }
+.progress-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.progress-head .now { color: var(--muted); font-size: 13px; }
+.progress-head strong { font-size: 14px; }
+.empty { color: var(--muted); padding: 40px; text-align: center; }
+.dossier { display: grid; gap: 14px; }
+.dossier .summary { font-size: 14px; line-height: 1.55; }
+.dossier .dossier-group { display: grid; gap: 6px; }
+.dossier .dossier-group h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0; font-weight: 600; }
+.dossier .pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.dossier .item { font-size: 13px; line-height: 1.45; }
+.dossier .item b { font-weight: 600; }
+.dossier .item .why { color: var(--muted); }
+.dossier a { color: var(--accent); text-decoration: none; }
+.dossier a:hover { text-decoration: underline; }
+details > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; user-select: none; }
+details[open] > summary { margin-bottom: 8px; }
+button:disabled { opacity: 0.6; cursor: wait; }
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--muted); border-top-color: var(--ink); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 6px; vertical-align: -1px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.feed-loading { padding: 30px; text-align: center; color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>xdm_agent</h1>
+  <span class="muted">an autonomous visual curator</span>
+  <span style="flex:1"></span>
+  <span class="muted" id="health"></span>
+</header>
+<main id="app"></main>
+<script src="/ui/app.js?v=7"></script>
+</body>
+</html>

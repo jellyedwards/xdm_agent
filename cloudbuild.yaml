@@ -1,0 +1,27 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/xdm-agent/xdm-agent:$SHORT_SHA", "."]
+  - name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/xdm-agent/xdm-agent:$SHORT_SHA"]
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - xdm-agent
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/xdm-agent/xdm-agent:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --memory=1Gi
+      - --cpu=1
+      - --timeout=300
+      - --concurrency=20
+      - --set-env-vars=STORAGE_BACKEND=firestore,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION}
+      - --set-secrets=UNSPLASH_ACCESS_KEY=unsplash-access-key:latest,PEXELS_API_KEY=pexels-api-key:latest,PIXABAY_API_KEY=pixabay-api-key:latest,GOOGLE_CSE_API_KEY=google-cse-api-key:latest,GOOGLE_CSE_CX=google-cse-cx:latest,SERPAPI_API_KEY=serpapi-api-key:latest,A2A_SHARED_SECRET=a2a-shared-secret:latest
+
+substitutions:
+  _REGION: europe-west2
+
+options:
+  logging: CLOUD_LOGGING_ONLY
