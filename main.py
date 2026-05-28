@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import logging
 import threading
 from typing import Optional, List, Dict, Any
@@ -11,6 +12,15 @@ from pydantic import BaseModel
 import httpx
 import uvicorn
 from dotenv import load_dotenv
+
+# Firebase admin is optional in dev — agent degrades to a single-user
+# "dev" identity when no service-account credentials are present.
+try:
+    import firebase_admin
+    from firebase_admin import auth as fb_auth, credentials as fb_credentials
+    _FIREBASE_AVAILABLE = True
+except Exception:
+    _FIREBASE_AVAILABLE = False
 
 from storage import Mindset, Candidate, FeedbackEvent, Hunt, get_store, now_iso, new_id
 from rubric import initialise_mindset_rubric, reflect_rubric, record_feedback, default_tactic_prefs
@@ -24,6 +34,59 @@ PORT = int(os.getenv("PORT", "8080"))
 XDM_SERVER_URL = os.getenv("XDM_SERVER_URL", "")
 XDM_SERVER_TOKEN = os.getenv("XDM_SERVER_TOKEN", "")
 A2A_SHARED_SECRET = os.getenv("A2A_SHARED_SECRET", "")
+AGENT_CLIENT_ID = os.getenv("AGENT_CLIENT_ID", "xdm_agent_v1")
+AGENT_CLIENT_SECRET = os.getenv("AGENT_CLIENT_SECRET", "")
+DEV_AUTH_ALLOW = os.getenv("DEV_AUTH_ALLOW", "1") == "1"  # accept unsigned requests as the dev user
+
+# Optionally initialise firebase_admin. Same FIREBASE_SERVICE_ACCOUNT
+# base64-encoded JSON pattern xdm_server uses.
+_firebase_ready = False
+if _FIREBASE_AVAILABLE and not firebase_admin._apps:
+    raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
+    if raw:
+        try:
+            key_json = json.loads(base64.b64decode(raw).decode("utf-8"))
+            firebase_admin.initialize_app(fb_credentials.Certificate(key_json))
+            _firebase_ready = True
+            logging.info("firebase_admin initialised — real token verification on")
+        except Exception as exc:
+            logging.warning(f"firebase_admin init failed; falling back to dev auth: {exc}")
+elif _FIREBASE_AVAILABLE:
+    _firebase_ready = True
+
+
+def verify_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """Verify a Firebase ID JWT from the Authorization header.
+
+    Returns a dict with at least `uid` and (usually) `email`.
+    In dev (no firebase_admin creds + DEV_AUTH_ALLOW=1), accepts any
+    request and returns a stable "dev" identity so the UI works.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        if DEV_AUTH_ALLOW and not _firebase_ready:
+            return {"uid": "dev", "email": "dev@local"}
+        raise HTTPException(401, "Authorization: Bearer <token> required")
+    token = authorization.split(" ", 1)[1].strip()
+    if not _firebase_ready:
+        if DEV_AUTH_ALLOW:
+            return {"uid": "dev", "email": "dev@local", "raw_token_prefix": token[:8]}
+        raise HTTPException(500, "Firebase admin not initialised")
+    try:
+        decoded = fb_auth.verify_id_token(token)
+    except Exception as exc:
+        logging.info(f"verify_user: {exc}")
+        raise HTTPException(401, "Invalid authentication token")
+    return decoded
+
+
+def verify_user_optional(authorization: Optional[str] = Header(None)) -> Optional[Dict[str, Any]]:
+    """Same as verify_user but returns None instead of 401 when missing."""
+    if not authorization:
+        return None
+    try:
+        return verify_user(authorization)
+    except HTTPException:
+        return None
 
 app = FastAPI(title="xdm_agent", version="0.1.0")
 
@@ -256,18 +319,51 @@ def a2a_curate(req: A2ACurateReq, x_a2a_token: Optional[str] = Header(None)):
 
 
 @app.post("/publish/design_xdm")
-def publish_design_xdm(req: PublishToXdmReq):
+def publish_design_xdm_legacy(req: PublishToXdmReq):
+    """Legacy endpoint kept for tests; new clients should use POST /publish/mindset/{id}."""
+    return _publish_to_xdm_server(req.mindset_id, req.board_name, req.max_images, req.user_token)
+
+
+class PublishMindsetReq(BaseModel):
+    board_name: Optional[str] = None
+    max_images: int = 60
+    installation_id: Optional[str] = None  # for autonomous flow; ignored on live publish
+
+
+@app.post("/publish/mindset/{mindset_id}")
+def publish_mindset(
+    mindset_id: str,
+    req: PublishMindsetReq,
+    authorization: Optional[str] = Header(None),
+    user: Dict[str, Any] = Depends(verify_user),
+):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        # In dev mode verify_user has already populated `user` even without a header;
+        # we just have no token to forward, which means xdm_server will reject. Surface that.
+        raise HTTPException(401, "publishing requires a signed-in user")
+    user_token = authorization.split(" ", 1)[1].strip()
+    return _publish_to_xdm_server(mindset_id, req.board_name, req.max_images, user_token, installation_id=req.installation_id)
+
+
+def _publish_to_xdm_server(mindset_id: str, board_name: Optional[str], max_images: int, user_token: str, installation_id: Optional[str] = None):
     if not XDM_SERVER_URL:
         raise HTTPException(501, "XDM_SERVER_URL not configured")
     store = get_store()
-    m = store.get_mindset(req.mindset_id)
+    m = store.get_mindset(mindset_id)
     if not m:
         raise HTTPException(404, "mindset not found")
-    cs = store.list_candidates(req.mindset_id, status="surfaced", limit=req.max_images)
+    # Prefer liked images; fall back to all surfaced ones.
+    liked = store.list_candidates(mindset_id, status="liked", limit=max_images)
+    surfaced = store.list_candidates(mindset_id, status="surfaced", limit=max_images)
+    cs = (liked + [c for c in surfaced if c.id not in {x.id for x in liked}])[:max_images]
+    if not cs:
+        raise HTTPException(400, "no images to publish — like some first, or run a hunt")
     payload = {
-        "name": req.board_name or m.name,
+        "name": board_name or m.name,
         "theme": m.theme,
         "rubric": m.rubric_text,
+        "installation_id": installation_id,
+        "agent_id": AGENT_CLIENT_ID,
         "images": [
             {
                 "image_url": c.image_url,
@@ -286,7 +382,7 @@ def publish_design_xdm(req: PublishToXdmReq):
     r = httpx.post(
         f"{XDM_SERVER_URL.rstrip('/')}/board_from_external_agent",
         json=payload,
-        headers={"Authorization": f"Bearer {req.user_token}"},
+        headers={"Authorization": f"Bearer {user_token}"},
         timeout=30.0,
     )
     if r.status_code >= 400:

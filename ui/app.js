@@ -1,8 +1,31 @@
 const $app = document.getElementById("app");
+const $userSlot = document.getElementById("user-slot");
+
+async function authHeaders() {
+  const headers = { "content-type": "application/json" };
+  try {
+    const token = await window.agentAuth?.getIdToken?.();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  } catch (e) { console.warn("getIdToken failed:", e); }
+  return headers;
+}
 
 const api = {
-  async get(p) { const r = await fetch(p); if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.json(); },
-  async post(p, body) { const r = await fetch(p, {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body || {})}); if (!r.ok) { const t = await r.text(); throw new Error(`${p}: ${r.status} ${t.slice(0,200)}`);} return r.json(); },
+  async get(p) {
+    const r = await fetch(p, { headers: await authHeaders() });
+    if (!r.ok) throw new Error(`${p}: ${r.status}`);
+    return r.json();
+  },
+  async post(p, body) {
+    const r = await fetch(p, { method: "POST", headers: await authHeaders(), body: JSON.stringify(body || {}) });
+    if (!r.ok) { const t = await r.text(); throw new Error(`${p}: ${r.status} ${t.slice(0,200)}`); }
+    return r.json();
+  },
+  async del(p) {
+    const r = await fetch(p, { method: "DELETE", headers: await authHeaders() });
+    if (!r.ok) throw new Error(`${p}: ${r.status}`);
+    return r.json();
+  },
 };
 
 const RIGHTS_LABEL = {
@@ -103,6 +126,7 @@ async function renderMindset(id) {
       el("div", {class:"row", style:"margin-top:8px"},
         el("button", {onClick: () => saveDirection(id)}, "save direction"),
         el("button", {class:"primary", id:"hunt-btn", onClick: () => hunt(id)}, "hunt now"),
+        el("button", {id:"publish-btn", onClick: () => publishToXdm(id)}, "↗ publish to design xdm"),
       ),
     )
   ));
@@ -336,6 +360,29 @@ async function saveDirection(id) {
 
 let huntPollTimer = null;
 
+async function publishToXdm(id) {
+  if (!window.agentAuth?.current()) {
+    alert("sign in with design xdm first (top-right)");
+    return;
+  }
+  const btn = document.getElementById("publish-btn");
+  if (btn) { btn.disabled = true; btn.replaceChildren(el("span", {class:"spinner"}), document.createTextNode("publishing…")); }
+  try {
+    const m = await api.get(`/mindset/${id}`);
+    const r = await api.post(`/publish/mindset/${id}`, { board_name: m.name, max_images: 60 });
+    if (r.board_url) {
+      const open = confirm(`Published to design xdm.\nBoard: ${r.board_url}\n\nOpen it now?`);
+      if (open) window.open(r.board_url, "_blank");
+    } else {
+      alert("Published.");
+    }
+  } catch (e) {
+    alert("publish failed: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "↗ publish to design xdm"; }
+  }
+}
+
 async function hunt(id) {
   const btn = document.getElementById("hunt-btn");
   if (btn) { btn.disabled = true; btn.replaceChildren(el("span", {class:"spinner"}), document.createTextNode("hunting…")); }
@@ -442,5 +489,31 @@ async function renderTrace(id) {
   } catch (e) { $app.appendChild(el("div", {class:"empty"}, e.message)); }
 }
 
+function renderUser(u) {
+  if (!$userSlot) return;
+  $userSlot.replaceChildren();
+  if (window.agentAuth?.isEmbedded) {
+    if (u) $userSlot.appendChild(el("span", {class:"user-info"}, "as ", el("b", {}, u.email || u.displayName || "you")));
+    return;
+  }
+  if (u) {
+    $userSlot.appendChild(el("span", {class:"user-info"}, "signed in as ", el("b", {}, u.email || u.displayName || "you")));
+    $userSlot.appendChild(el("button", {onClick: () => window.agentAuth.signOut()}, "sign out"));
+  } else {
+    $userSlot.appendChild(el("button", {class:"primary", onClick: () => window.agentAuth.signIn().catch(e => alert(e.message))}, "sign in with design xdm"));
+  }
+}
+
+async function bootstrap() {
+  if (!window.agentAuth) {
+    await new Promise(r => window.addEventListener("agent-auth-ready", r, { once: true }));
+  }
+  await window.agentAuth.firstAuthDecision();
+  renderUser(window.agentAuth.current());
+  window.agentAuth.onChange((u) => { renderUser(u); route(); });
+  await refreshHealth();
+  route();
+}
+
 window.addEventListener("hashchange", route);
-refreshHealth().then(route);
+bootstrap();

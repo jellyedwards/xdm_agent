@@ -65,6 +65,10 @@ header h1 {
 header h1 .logo-accent { color: var(--accent); font-weight: 900; }
 header .tagline { color: var(--muted); font-size: 13px; font-weight: 400; }
 header .status { color: var(--muted); font-size: 12px; margin-left:auto; }
+header .user-slot { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; }
+header .user-slot .user-info { color: var(--muted); }
+header .user-slot .user-info b { color: var(--ink); font-weight: 600; }
+header .user-slot button { padding: 6px 14px; font-size: 12px; }
 
 main { padding: 32px; max-width: 1400px; margin: 0 auto; }
 section { margin-bottom: 32px; }
@@ -297,8 +301,10 @@ details[open] > summary { margin-bottom: 12px; }
 <header>
   <h1>xdm<span class="logo-accent">_</span>agent</h1>
   <span class="tagline">an autonomous visual curator</span>
+  <span class="user-slot" id="user-slot"></span>
 </header>
 <main id="app"></main>
-<script src="/ui/app.js?v=14"></script>
+<script type="module" src="/ui/auth.js?v=1"></script>
+<script src="/ui/app.js?v=15"></script>
 </body>
 </html>
