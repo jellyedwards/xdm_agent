@@ -271,6 +271,9 @@ details > summary { cursor: pointer; color: var(--muted); font-size: 13px; paddi
 details > summary:hover { color: var(--accent); }
 details[open] > summary { margin-bottom: 12px; }
 
+/* Progress card spans the whole feed grid while a hunt is running. */
+#feed > .progress-card,
+#feed > .feed-loading { grid-column: 1 / -1; }
 .feed-loading { padding: 36px; text-align: center; color: var(--muted); font-style: italic; font-size: 14px; }
 .feed-loading .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin-right: 10px; display:inline-block; vertical-align: -2px; }
 .empty { color: var(--muted); padding: 48px; text-align: center; font-size: 14px; }
@@ -296,6 +299,6 @@ details[open] > summary { margin-bottom: 12px; }
   <span class="tagline">an autonomous visual curator</span>
 </header>
 <main id="app"></main>
-<script src="/ui/app.js?v=12"></script>
+<script src="/ui/app.js?v=13"></script>
 </body>
 </html>

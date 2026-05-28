@@ -397,7 +397,7 @@ const STEP_LABEL = {
 
 function renderProgress(h, container) {
   container.replaceChildren();
-  const card = el("div", {class:"card"});
+  const card = el("div", {class:"card progress-card"});
   const last = (h.trace || [])[h.trace.length - 1] || {};
   const inFlight = h.status !== "completed" && h.status !== "failed";
   card.appendChild(el("div", {class:"progress-head"},
