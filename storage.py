@@ -147,14 +147,14 @@ class Store(Protocol):
     def list_rubric_versions(self, mindset_id: str) -> List[RubricVersion]: ...
     def save_candidate(self, c: Candidate) -> Candidate: ...
     def update_candidate(self, c: Candidate) -> Candidate: ...
-    def get_candidate(self, candidate_id: str) -> Optional[Candidate]: ...
+    def get_candidate(self, candidate_id: str, mindset_id: Optional[str] = None) -> Optional[Candidate]: ...
     def list_candidates(self, mindset_id: str, status: Optional[str] = None, limit: int = 200) -> List[Candidate]: ...
     def candidate_exists_for_url(self, mindset_id: str, image_url: str) -> bool: ...
     def save_feedback(self, e: FeedbackEvent) -> None: ...
     def list_feedback(self, mindset_id: str, limit: int = 50) -> List[FeedbackEvent]: ...
     def save_hunt(self, h: Hunt) -> Hunt: ...
     def update_hunt(self, h: Hunt) -> Hunt: ...
-    def get_hunt(self, hunt_id: str) -> Optional[Hunt]: ...
+    def get_hunt(self, hunt_id: str, mindset_id: Optional[str] = None) -> Optional[Hunt]: ...
     def list_hunts(self, mindset_id: str, limit: int = 20) -> List[Hunt]: ...
 
 
@@ -237,7 +237,7 @@ class MemoryStore:
         self._persist()
         return c
 
-    def get_candidate(self, candidate_id):
+    def get_candidate(self, candidate_id, mindset_id=None):
         return self.candidates.get(candidate_id)
 
     def list_candidates(self, mindset_id, status=None, limit=200):
@@ -275,7 +275,7 @@ class MemoryStore:
         self._persist()
         return h
 
-    def get_hunt(self, hunt_id):
+    def get_hunt(self, hunt_id, mindset_id=None):
         return self.hunts.get(hunt_id)
 
     def list_hunts(self, mindset_id, limit=20):
@@ -306,10 +306,12 @@ class FirestoreStore:
         return Mindset(**snap.to_dict())
 
     def list_mindsets(self, owner_uid=None):
-        q = self.mindsets
         if owner_uid is not None:
-            q = q.where("owner_uid", "==", owner_uid)
-        return [Mindset(**d.to_dict()) for d in q.order_by("updated_at", direction="DESCENDING").stream()]
+            # filter server-side, sort in Python (no composite index needed)
+            ms = [Mindset(**d.to_dict()) for d in self.mindsets.where("owner_uid", "==", owner_uid).stream()]
+            ms.sort(key=lambda m: m.updated_at or "", reverse=True)
+            return ms
+        return [Mindset(**d.to_dict()) for d in self.mindsets.order_by("updated_at", direction="DESCENDING").stream()]
 
     def save_rubric_version(self, v):
         self._mindset_doc(v.mindset_id).collection("versions").document(str(v.version)).set(v.model_dump())
@@ -330,16 +332,23 @@ class FirestoreStore:
         self._mindset_doc(c.mindset_id).collection("candidates").document(c.id).set(c.model_dump())
         return c
 
-    def get_candidate(self, candidate_id):
-        # not indexed by id alone; expect callers to know the mindset. expensive scan fallback skipped.
-        raise NotImplementedError("Firestore get_candidate requires mindset_id context")
+    def get_candidate(self, candidate_id, mindset_id=None):
+        # The candidate doc id IS the candidate id, nested under its mindset —
+        # so with mindset context this is a direct read (no query, no index).
+        if not mindset_id:
+            raise NotImplementedError("Firestore get_candidate requires mindset_id context")
+        snap = self._mindset_doc(mindset_id).collection("candidates").document(candidate_id).get()
+        return Candidate(**snap.to_dict()) if snap.exists else None
 
     def list_candidates(self, mindset_id, status=None, limit=200):
+        # Filter by status server-side (auto single-field index), then sort in
+        # Python — avoids needing a composite (status, judge_score) index.
         q = self._mindset_doc(mindset_id).collection("candidates")
         if status:
             q = q.where("status", "==", status)
-        q = q.order_by("judge_score", direction="DESCENDING").limit(limit)
-        return [Candidate(**d.to_dict()) for d in q.stream()]
+        cands = [Candidate(**d.to_dict()) for d in q.stream()]
+        cands.sort(key=lambda c: (c.status == "liked", c.judge_score or 0), reverse=True)
+        return cands[:limit]
 
     def candidate_exists_for_url(self, mindset_id, image_url):
         from hashlib import sha1
@@ -361,8 +370,11 @@ class FirestoreStore:
         self._mindset_doc(h.mindset_id).collection("hunts").document(h.id).set(h.model_dump())
         return h
 
-    def get_hunt(self, hunt_id):
-        raise NotImplementedError("Firestore get_hunt requires mindset_id context")
+    def get_hunt(self, hunt_id, mindset_id=None):
+        if not mindset_id:
+            raise NotImplementedError("Firestore get_hunt requires mindset_id context")
+        snap = self._mindset_doc(mindset_id).collection("hunts").document(hunt_id).get()
+        return Hunt(**snap.to_dict()) if snap.exists else None
 
     def list_hunts(self, mindset_id, limit=20):
         q = self._mindset_doc(mindset_id).collection("hunts").order_by("started_at", direction="DESCENDING").limit(limit)

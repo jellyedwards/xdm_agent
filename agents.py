@@ -528,7 +528,7 @@ def run_hunt(mindset_id: str, budget: int = None, hunt_id: str = None) -> Hunt:
     # otherwise create a fresh one (sync path).
     h = None
     if hunt_id:
-        h = store.get_hunt(hunt_id)
+        h = store.get_hunt(hunt_id, mindset_id)
     if not h:
         h = Hunt(id=hunt_id or new_id(), mindset_id=mindset_id)
 

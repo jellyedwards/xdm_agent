@@ -19,8 +19,9 @@ steps:
       - --concurrency=20
       - --min-instances=0
       - --max-instances=${_MAX_INSTANCES}
-      - --set-env-vars=STORAGE_BACKEND=firestore,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION},PUBLIC_MODE=1,AGENT_CLIENT_ID=xdm_agent_v1,QUOTA_DAILY_HUNTS=20,QUOTA_DAILY_MINDSETS=20,QUOTA_DAILY_GLOBAL=${_QUOTA_DAILY_GLOBAL},XDM_SERVER_URL=${_XDM_SERVER_URL}
-      - --set-secrets=UNSPLASH_ACCESS_KEY=unsplash-access-key:latest,PEXELS_API_KEY=pexels-api-key:latest,PIXABAY_API_KEY=pixabay-api-key:latest,GOOGLE_CSE_API_KEY=google-cse-api-key:latest,GOOGLE_CSE_CX=google-cse-cx:latest,SERPAPI_API_KEY=serpapi-api-key:latest,A2A_SHARED_SECRET=a2a-shared-secret:latest,JUDGE_ACCESS_CODES=judge-access-codes:latest,FIREBASE_SERVICE_ACCOUNT=firebase-service-account:latest,AGENT_CLIENT_SECRET=agent-client-secret:latest
+      - --no-cpu-throttling   # keep CPU for the background hunt thread (async hunts run after the response)
+      - --set-env-vars=STORAGE_BACKEND=firestore,GOOGLE_GENAI_USE_VERTEXAI=false,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION},PUBLIC_MODE=1,AGENT_CLIENT_ID=xdm_agent_v1,QUOTA_DAILY_HUNTS=20,QUOTA_DAILY_MINDSETS=20,QUOTA_DAILY_GLOBAL=${_QUOTA_DAILY_GLOBAL},XDM_SERVER_URL=${_XDM_SERVER_URL}
+      - --set-secrets=UNSPLASH_ACCESS_KEY=unsplash-access-key:latest,PEXELS_API_KEY=pexels-api-key:latest,PIXABAY_API_KEY=pixabay-api-key:latest,GOOGLE_CSE_API_KEY=google-cse-api-key:latest,GOOGLE_CSE_CX=google-cse-cx:latest,SERPAPI_API_KEY=serpapi-api-key:latest,A2A_SHARED_SECRET=a2a-shared-secret:latest,JUDGE_ACCESS_CODES=judge-access-codes:latest,FIREBASE_SERVICE_ACCOUNT=firebase-service-account:latest,AGENT_CLIENT_SECRET=agent-client-secret:latest,GEMINI_API_KEY=gemini-api-key:latest
 
 # Secrets expected in Secret Manager (create once: gcloud secrets create <name> --data-file=-):
 #   unsplash-access-key, pexels-api-key, pixabay-api-key, google-cse-api-key,
@@ -36,6 +37,8 @@ substitutions:
   _MAX_INSTANCES: "3"
   _QUOTA_DAILY_GLOBAL: "600"
   _XDM_SERVER_URL: ""   # set to the design xdm server origin to enable publish-to-moodboard
+
+timeout: 1800s
 
 options:
   logging: CLOUD_LOGGING_ONLY

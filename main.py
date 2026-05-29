@@ -294,12 +294,8 @@ def list_hunts(mindset_id: str, limit: int = 20):
 
 @app.get("/hunt/{mindset_id}/{hunt_id}")
 def get_hunt(mindset_id: str, hunt_id: str):
-    # MemoryStore can find by id alone; Firestore needs mindset context — both routes supported by passing mindset_id.
     store = get_store()
-    try:
-        h = store.get_hunt(hunt_id)
-    except NotImplementedError:
-        h = next((x for x in store.list_hunts(mindset_id, limit=200) if x.id == hunt_id), None)
+    h = store.get_hunt(hunt_id, mindset_id)
     if not h:
         raise HTTPException(404, "hunt not found")
     return h.model_dump()

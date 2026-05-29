@@ -218,7 +218,7 @@ def reflect_rubric(mindset_id: str) -> Mindset:
     image_ids = {e.image_id for e in events if e.image_id}
     cand_lookup = {}
     for cid in image_ids:
-        c = store.get_candidate(cid) if cid else None
+        c = store.get_candidate(cid, mindset_id) if cid else None
         if c:
             cand_lookup[cid] = c
 
@@ -257,7 +257,7 @@ def update_tactic_prefs(mindset_id: str, event: FeedbackEvent) -> None:
     m = store.get_mindset(mindset_id)
     if not m or not event.image_id:
         return
-    c = store.get_candidate(event.image_id)
+    c = store.get_candidate(event.image_id, mindset_id)
     if not c:
         return
     tactic = (c.discovered_via or {}).get("tactic")
@@ -275,7 +275,7 @@ def record_feedback(mindset_id: str, kind: str, image_id: str = None, direction_
     store.save_feedback(e)
 
     if image_id and kind in ("like", "dislike", "hide"):
-        c = store.get_candidate(image_id)
+        c = store.get_candidate(image_id, mindset_id)
         if c:
             c.status = {"like": "liked", "dislike": "disliked", "hide": "surfaced"}[kind]
             c.feedback_note = note
