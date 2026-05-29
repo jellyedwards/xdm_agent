@@ -17,6 +17,7 @@ gcp-key*.json
 .vscode/
 .idea/
 .DS_Store
+.playwright-mcp/
 
 dist/
 build/
