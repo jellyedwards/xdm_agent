@@ -13,6 +13,7 @@ google-cloud-aiplatform
 google-cloud-firestore==2.19.0
 google-auth==2.37.0
 google-api-core==2.24.0
+firebase-admin==6.5.0
 
 beautifulsoup4==4.12.3
 lxml==4.9.2

@@ -1,8 +1,26 @@
 const $app = document.getElementById("app");
 const $userSlot = document.getElementById("user-slot");
 
+// Stable per-browser session id for public-demo quotas.
+const SESSION_ID = (() => {
+  let s = localStorage.getItem("xdm_session_id");
+  if (!s) {
+    s = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+    localStorage.setItem("xdm_session_id", s);
+  }
+  return s;
+})();
+// Capture ?code=… from the magic link and remember it.
+(() => {
+  const c = new URLSearchParams(location.search).get("code");
+  if (c) localStorage.setItem("xdm_access_code", c.trim());
+})();
+function accessCode() { return localStorage.getItem("xdm_access_code") || ""; }
+
 async function authHeaders() {
-  const headers = { "content-type": "application/json" };
+  const headers = { "content-type": "application/json", "X-Session-Id": SESSION_ID };
+  const code = accessCode();
+  if (code) headers["X-Access-Code"] = code;
   try {
     const token = await window.agentAuth?.getIdToken?.();
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -10,23 +28,50 @@ async function authHeaders() {
   return headers;
 }
 
+async function _err(p, r) {
+  let detail = "";
+  try { detail = (await r.json()).detail || ""; } catch { try { detail = (await r.text()).slice(0, 200); } catch {} }
+  const e = new Error(detail || `${p}: ${r.status}`);
+  e.status = r.status;
+  return e;
+}
+
 const api = {
   async get(p) {
-    const r = await fetch(p, { headers: await authHeaders() });
-    if (!r.ok) throw new Error(`${p}: ${r.status}`);
+    const r = await fetch(p, { headers: await authHeaders(), cache: "no-store" });
+    if (!r.ok) throw await _err(p, r);
     return r.json();
   },
   async post(p, body) {
     const r = await fetch(p, { method: "POST", headers: await authHeaders(), body: JSON.stringify(body || {}) });
-    if (!r.ok) { const t = await r.text(); throw new Error(`${p}: ${r.status} ${t.slice(0,200)}`); }
+    if (!r.ok) throw await _err(p, r);
     return r.json();
   },
   async del(p) {
     const r = await fetch(p, { method: "DELETE", headers: await authHeaders() });
-    if (!r.ok) throw new Error(`${p}: ${r.status}`);
+    if (!r.ok) throw await _err(p, r);
     return r.json();
   },
 };
+
+// Quota / access-aware error surfacing. On 403 with no code yet, let the user
+// paste the access code they were given.
+function notifyError(e) {
+  if (e && e.status === 403 && !accessCode()) {
+    const c = prompt("This is a limited public demo.\nEnter the access code you were given:");
+    if (c && c.trim()) { localStorage.setItem("xdm_access_code", c.trim()); alert("Access code saved — please try again."); return; }
+  }
+  alert(e && e.message ? e.message : String(e));
+}
+
+async function updateQuotaNote() {
+  const note = document.getElementById("quota-note");
+  if (!note) return;
+  try {
+    const q = await api.get("/quota");
+    note.textContent = (!q.public_mode || q.trusted) ? "" : `· ${q.hunts_remaining}/${q.daily_hunts} runs left today`;
+  } catch { note.textContent = ""; }
+}
 
 const RIGHTS_LABEL = {
   clear:   { text: "free to use",     cls: "good", title: "Licensed for any use; attribution preserved." },
@@ -35,6 +80,7 @@ const RIGHTS_LABEL = {
 };
 
 let SOURCES = {};
+const AGENT_ID = "xdm_agent_v1";
 
 function el(tag, props = {}, ...kids) {
   const e = document.createElement(tag);
@@ -111,7 +157,7 @@ async function createMindset() {
   try {
     const m = await api.post("/mindset", {name, theme});
     location.hash = `#/mindset/${m.id}`;
-  } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = "create"; }
+  } catch (e) { notifyError(e); btn.disabled = false; btn.textContent = "create"; }
 }
 
 async function renderMindset(id) {
@@ -126,10 +172,11 @@ async function renderMindset(id) {
       el("div", {class:"row", style:"margin-top:8px"},
         el("button", {onClick: () => saveDirection(id)}, "save direction"),
         el("button", {class:"primary", id:"hunt-btn", onClick: () => hunt(id)}, "hunt now"),
-        el("button", {id:"publish-btn", onClick: () => publishToXdm(id)}, "↗ publish to design xdm"),
+        el("span", {id:"quota-note", class:"theme"}, ""),
       ),
     )
   ));
+  $app.appendChild(el("section", {id:"publish-sec"}));
   $app.appendChild(el("section", {id:"rubric"}));
   $app.appendChild(el("section", {}, el("h2", {}, "feed"), el("div", {id:"feed", class:"grid"})));
   $app.appendChild(el("section", {}, el("h2", {}, "recent hunts"), el("div", {id:"hunts"})));
@@ -177,6 +224,8 @@ async function reloadMindset(id) {
     );
 
     const cs = await api.get(`/collection/${id}`);
+    renderPublish(id, m, cs);
+    updateQuotaNote();
     const feed = document.getElementById("feed");
     feed.replaceChildren();
     if (!cs.length) feed.appendChild(el("div", {class:"empty"}, "no images yet — try 'hunt now'"));
@@ -326,7 +375,12 @@ function renderTile(c) {
   t.appendChild(el("img", {src: c.thumbnail_url || c.image_url, loading: "lazy", referrerpolicy: "no-referrer"}));
   t.appendChild(el("div", {class:"meta"},
     el("div", {class:"title"}, truncate(c.title || "(untitled)", 90)),
-    el("div", {class:"src"}, `${sourceName(c.source_id)} · ${c.creator || "unknown"}`),
+    el("div", {class:"src"},
+      el("a", {class:"src-link", href: c.source_page_url || c.image_url, target:"_blank", rel:"noopener"},
+        `${sourceName(c.source_id)} · ${c.creator || "unknown"}`,
+        el("span", {class:"ext"}, "↗"),
+      ),
+    ),
     el("div", {class:"score"}, c.judge_score != null ? `score ${c.judge_score.toFixed(1)}` : "unscored"),
     el("div", {class:"reason"}, c.judge_reason ? `“${truncate(c.judge_reason, 140)}”` : ""),
     el("div", {style:"margin-top:6px"}, el("span", {class: "pill " + rights.cls, title: rights.title}, rights.text)),
@@ -335,7 +389,6 @@ function renderTile(c) {
   t.appendChild(el("div", {class:"actions"},
     el("button", {class: liked ? "like-on" : "", onClick: () => fb(c, liked ? "unlike" : "like")}, liked ? "♥ liked" : "♡ like"),
     el("button", {onClick: () => fb(c, "dislike")}, "✕ remove"),
-    el("button", {onClick: () => window.open(c.source_page_url || c.image_url, "_blank")}, "↗ source"),
   ));
   return t;
 }
@@ -360,26 +413,133 @@ async function saveDirection(id) {
 
 let huntPollTimer = null;
 
-async function publishToXdm(id) {
-  if (!window.agentAuth?.current()) {
-    alert("sign in with design xdm first (top-right)");
-    return;
+let PUB_MODE = "liked";  // all | liked | top
+const TOP_N = 12;        // "top scorers" = the highest-scored dozen
+
+function selectedCandidates(mode, cs) {
+  if (mode === "all") return cs.slice();
+  if (mode === "liked") return cs.filter(c => c.status === "liked");
+  // top scorers: best-scored first, capped at TOP_N
+  return cs.filter(c => c.judge_score != null).sort((a, b) => (b.judge_score || 0) - (a.judge_score || 0)).slice(0, TOP_N);
+}
+
+function renderPublish(id, m, cs) {
+  const sec = document.getElementById("publish-sec");
+  if (!sec) return;
+  cs = cs || [];
+  const counts = {
+    all: cs.length,
+    liked: selectedCandidates("liked", cs).length,
+    top: selectedCandidates("top", cs).length,
+  };
+  // fall back to a non-empty selection if the current mode has nothing
+  if (counts[PUB_MODE] === 0) PUB_MODE = counts.liked ? "liked" : counts.top ? "top" : "all";
+  const sel = selectedCandidates(PUB_MODE, cs);
+  const connected = !!m.publish_installation_id;
+
+  const segBtn = (mode, label) =>
+    el("button", {class: PUB_MODE === mode ? "on" : "", onClick: () => { PUB_MODE = mode; renderPublish(id, m, cs); }}, label);
+  const seg = el("div", {class:"seg-row"},
+    segBtn("all", `add all (${counts.all})`),
+    segBtn("liked", `add liked (${counts.liked})`),
+    segBtn("top", `add top scorers (${counts.top})`),
+  );
+
+  let grid;
+  if (!sel.length) {
+    grid = el("div", {class:"pub-empty"}, "nothing in this selection yet — like some images, or run a hunt.");
+  } else {
+    grid = el("div", {class:"pub-grid"});
+    const shown = sel.slice(0, 11);
+    for (const c of shown) grid.appendChild(el("img", {src: c.thumbnail_url || c.image_url, loading:"lazy", referrerpolicy:"no-referrer", title: c.title || ""}));
+    if (sel.length > shown.length) grid.appendChild(el("div", {class:"more"}, `+${sel.length - shown.length}`));
   }
+
+  const pubBtn = el("button", {class:"primary", id:"publish-btn", onClick: () => publishSelection(id, sel)},
+    sel.length ? `↗ publish ${sel.length} to design xdm` : "nothing to publish");
+  pubBtn.disabled = !sel.length;
+
+  const autoCheckbox = el("input", {type:"checkbox", id:"autopub-check"});
+  autoCheckbox.checked = connected;
+  autoCheckbox.addEventListener("change", () => onAutoPublishToggle(id, autoCheckbox.checked));
+  const autoLabel = el("label", {class:"checkbox-row", for:"autopub-check"},
+    autoCheckbox,
+    el("span", {}, "auto-publish on a schedule"),
+    el("span", {class:"hint"}, connected ? "· connected · scheduled runs coming soon" : "· connects your design xdm account"),
+  );
+
+  const foot = el("div", {class:"pub-foot"}, pubBtn, autoLabel);
+  if (connected) foot.appendChild(el("button", {id:"disconnect-btn", onClick: () => disconnectInstallation(id)}, "disconnect"));
+
+  sec.replaceChildren(el("h2", {}, "publish"),
+    el("div", {class:"card"},
+      el("div", {class:"theme", style:"margin-bottom:10px"}, "publish a board to design xdm — pick what to include:"),
+      seg, grid, foot,
+    )
+  );
+}
+
+async function publishSelection(id, sel) {
+  if (!window.agentAuth?.current()) { alert("sign in to the agent first (top-right) to publish."); return; }
+  if (!sel.length) return;
   const btn = document.getElementById("publish-btn");
-  if (btn) { btn.disabled = true; btn.replaceChildren(el("span", {class:"spinner"}), document.createTextNode("publishing…")); }
+  if (!btn) return;
+  btn.disabled = true;
+  btn.replaceChildren(el("span", {class:"spinner"}), document.createTextNode("publishing…"));
   try {
     const m = await api.get(`/mindset/${id}`);
-    const r = await api.post(`/publish/mindset/${id}`, { board_name: m.name, max_images: 60 });
-    if (r.board_url) {
-      const open = confirm(`Published to design xdm.\nBoard: ${r.board_url}\n\nOpen it now?`);
-      if (open) window.open(r.board_url, "_blank");
-    } else {
-      alert("Published.");
-    }
+    const r = await api.post(`/publish/mindset/${id}`, { board_name: m.name, image_ids: sel.map(c => c.id), max_images: 200 });
+    // Swap the button for a green "published" status + a board link the user can pick.
+    const count = r.image_count != null ? r.image_count : sel.length;
+    const done = el("button", {class:"primary published"}, `✓ published ${count}`);
+    const after = [done];
+    if (r.board_url) after.push(el("a", {class:"published-link", href: r.board_url, target:"_blank", rel:"noopener"}, "open board ↗"));
+    btn.replaceWith(...after);
   } catch (e) {
+    btn.disabled = false;
+    btn.classList.remove("published");
+    btn.textContent = `↗ publish ${sel.length} to design xdm`;
     alert("publish failed: " + e.message);
+  }
+}
+
+async function onAutoPublishToggle(id, checked) {
+  if (checked) await connectInstallation(id);
+  else await disconnectInstallation(id, true);
+}
+
+async function connectInstallation(id) {
+  if (!window.agentAuth?.current()) {
+    alert("sign in to the agent first (top-right), then turn on auto-publish.");
+    await reloadMindset(id);  // resync the checkbox
+    return;
+  }
+  try {
+    const scopes = ["board.create"];
+    const result = window.agentAuth.isEmbedded
+      ? await window.agentAuth.requestInstall(AGENT_ID, scopes)
+      : await window.agentAuth.connectViaPopup(AGENT_ID, scopes);
+    if (!result || !result.installation_id) throw new Error("no installation id returned");
+    await api.post(`/installations/${id}`, { installation_id: result.installation_id });
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (msg !== "cancelled" && msg !== "popup closed") alert("connect failed: " + msg);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "↗ publish to design xdm"; }
+    await reloadMindset(id);  // reflect real connected state (and reset checkbox on cancel)
+  }
+}
+
+async function disconnectInstallation(id, skipConfirm) {
+  if (!skipConfirm && !confirm("Disconnect this mindset from design xdm? The agent will no longer be able to publish on your behalf.")) {
+    await reloadMindset(id);
+    return;
+  }
+  try {
+    await api.del(`/installations/${id}`);
+  } catch (e) {
+    alert("disconnect failed: " + e.message);
+  } finally {
+    await reloadMindset(id);
   }
 }
 
@@ -393,7 +553,7 @@ async function hunt(id) {
   try {
     const r = await api.post("/hunt", {mindset_id: id});
     hunt_id = r.hunt_id;
-  } catch (e) { alert("hunt start failed: " + e.message); resetHuntButton(); return; }
+  } catch (e) { notifyError(e); resetHuntButton(); return; }
 
   let lastTraceLen = -1;
   const poll = async () => {

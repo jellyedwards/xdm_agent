@@ -43,6 +43,12 @@ const TRUSTED_PARENT_ORIGINS = new Set([
 ]);
 const isEmbedded = window.self !== window.top;
 
+// Where the design xdm web app lives — used to open the connect/consent popup
+// (Flow 3 standalone). No build step, so pick by hostname at runtime.
+const XDM_WEB_ORIGIN = /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+  ? "http://localhost:3009"
+  : "https://designxdm.com";
+
 window.addEventListener("message", (ev) => {
   if (!TRUSTED_PARENT_ORIGINS.has(ev.origin)) return;
   const msg = ev.data;
@@ -105,6 +111,33 @@ window.agentAuth = {
     }
     // popup fallback handled in app.js
     return null;
+  },
+  // For #3 standalone (non-embedded): open the design xdm consent popup and
+  // resolve with {installation_id, agent} once the user clicks Allow.
+  connectViaPopup: (agentId, scopes) => {
+    const url = `${XDM_WEB_ORIGIN}/connect/agent?agent=${encodeURIComponent(agentId)}` +
+                `&scopes=${encodeURIComponent(scopes.join(","))}` +
+                `&return_origin=${encodeURIComponent(location.origin)}`;
+    const w = window.open(url, "xdm-connect", "width=520,height=720");
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, arg) => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener("message", h);
+        clearInterval(poll);
+        try { if (w) w.close(); } catch (e) {}
+        fn(arg);
+      };
+      const h = (ev) => {
+        if (ev.origin !== XDM_WEB_ORIGIN) return;
+        const m = ev.data;
+        if (m && m.kind === "install_complete" && m.installation_id) finish(resolve, m);
+        else if (m && m.kind === "install_cancelled") finish(reject, new Error("cancelled"));
+      };
+      window.addEventListener("message", h);
+      const poll = setInterval(() => { if (!w || w.closed) finish(reject, new Error("popup closed")); }, 700);
+    });
   },
 };
 

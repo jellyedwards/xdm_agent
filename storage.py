@@ -67,6 +67,8 @@ class Mindset(BaseModel):
     tactic_prefs: Dict[str, float] = Field(default_factory=dict)
     serendipity: float = 0.2
     schedule: Dict[str, Any] = Field(default_factory=lambda: {"cron": None, "last_run": None, "next_run": None, "budget": 100})
+    publish_installation_id: Optional[str] = None
+    publish_schedule: Optional[Dict[str, Any]] = None
     version: int = 1
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)

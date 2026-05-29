@@ -26,6 +26,7 @@ from storage import Mindset, Candidate, FeedbackEvent, Hunt, get_store, now_iso,
 from rubric import initialise_mindset_rubric, reflect_rubric, record_feedback, default_tactic_prefs
 from agents import run_hunt, plan_hunt, build_adk_agents, build_dossier, initialise_mindset_full
 from sources import SOURCE_REGISTRY, source_ready
+import quota
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -37,6 +38,8 @@ A2A_SHARED_SECRET = os.getenv("A2A_SHARED_SECRET", "")
 AGENT_CLIENT_ID = os.getenv("AGENT_CLIENT_ID", "xdm_agent_v1")
 AGENT_CLIENT_SECRET = os.getenv("AGENT_CLIENT_SECRET", "")
 DEV_AUTH_ALLOW = os.getenv("DEV_AUTH_ALLOW", "1") == "1"  # accept unsigned requests as the dev user
+PUBLIC_MODE = os.getenv("PUBLIC_MODE", "0") == "1"  # gate expensive ops behind access code + quota
+ACCESS_CODES = {c.strip() for c in os.getenv("JUDGE_ACCESS_CODES", "").split(",") if c.strip()}
 
 # Optionally initialise firebase_admin. Same FIREBASE_SERVICE_ACCOUNT
 # base64-encoded JSON pattern xdm_server uses.
@@ -87,6 +90,31 @@ def verify_user_optional(authorization: Optional[str] = Header(None)) -> Optiona
         return verify_user(authorization)
     except HTTPException:
         return None
+
+
+def _session_key(request: Request, user: Optional[Dict[str, Any]]):
+    """(quota key, trusted?). Signed-in real users are trusted (own bucket, no
+    per-session cap); judges are keyed by their access code + browser session."""
+    if user and user.get("uid") and user.get("uid") != "dev":
+        return f"uid:{user['uid']}", True
+    code = (request.headers.get("X-Access-Code") or "").strip()
+    sid = (request.headers.get("X-Session-Id") or "").strip()
+    base = sid or (request.client.host if request.client else "anon")
+    return f"code:{code}:{base}", False
+
+
+def public_gate(kind: str, request: Request, user: Optional[Dict[str, Any]]):
+    """Enforce access code + daily quota for expensive ops when PUBLIC_MODE is on.
+    No-op for local/dev and trusted single-tenant deployments."""
+    if not PUBLIC_MODE:
+        return
+    key, trusted = _session_key(request, user)
+    code = (request.headers.get("X-Access-Code") or "").strip()
+    if not trusted and (not ACCESS_CODES or code not in ACCESS_CODES):
+        raise HTTPException(403, "this is a limited public demo — an access code is required to run the agent.")
+    ok, reason, _rem = quota.check_and_consume(key, kind, trusted=trusted)
+    if not ok:
+        raise HTTPException(429, reason)
 
 app = FastAPI(title="xdm_agent", version="0.1.0")
 
@@ -168,8 +196,26 @@ def sources_meta():
     return out
 
 
+@app.get("/quota")
+def get_quota(request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
+    if not PUBLIC_MODE:
+        return {"public_mode": False}
+    key, trusted = _session_key(request, user)
+    code = (request.headers.get("X-Access-Code") or "").strip()
+    has_access = trusted or (bool(ACCESS_CODES) and code in ACCESS_CODES)
+    return {
+        "public_mode": True,
+        "trusted": trusted,
+        "has_access": has_access,
+        "hunts_remaining": -1 if trusted else quota.remaining(key, "hunt"),
+        "mindsets_remaining": -1 if trusted else quota.remaining(key, "mindset"),
+        "daily_hunts": quota.DAILY_LIMITS["hunt"],
+    }
+
+
 @app.post("/mindset")
-def create_mindset(req: CreateMindsetReq):
+def create_mindset(req: CreateMindsetReq, request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
+    public_gate("mindset", request, user)
     store = get_store()
     m = Mindset(name=req.name, theme=req.theme, owner_uid=req.owner_uid, serendipity=req.serendipity, tactic_prefs=default_tactic_prefs())
     store.save_mindset(m)
@@ -181,7 +227,8 @@ def create_mindset(req: CreateMindsetReq):
 
 
 @app.post("/mindset/{mindset_id}/dossier")
-def refresh_dossier(mindset_id: str):
+def refresh_dossier(mindset_id: str, request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
+    public_gate("mindset", request, user)
     store = get_store()
     m = store.get_mindset(mindset_id)
     if not m:
@@ -217,11 +264,12 @@ def reflect(mindset_id: str):
 
 
 @app.post("/hunt")
-def hunt(req: HuntReq):
+def hunt(req: HuntReq, request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
     store = get_store()
     m = store.get_mindset(req.mindset_id)
     if not m:
         raise HTTPException(404, "mindset not found")
+    public_gate("hunt", request, user)
     # Pre-create the Hunt record so we can return an id immediately and the
     # client can poll while the background thread updates the trace.
     h = Hunt(mindset_id=req.mindset_id)
@@ -328,6 +376,7 @@ class PublishMindsetReq(BaseModel):
     board_name: Optional[str] = None
     max_images: int = 60
     installation_id: Optional[str] = None  # for autonomous flow; ignored on live publish
+    image_ids: Optional[List[str]] = None  # explicit selection from the UI; falls back to liked+surfaced
 
 
 @app.post("/publish/mindset/{mindset_id}")
@@ -342,20 +391,75 @@ def publish_mindset(
         # we just have no token to forward, which means xdm_server will reject. Surface that.
         raise HTTPException(401, "publishing requires a signed-in user")
     user_token = authorization.split(" ", 1)[1].strip()
-    return _publish_to_xdm_server(mindset_id, req.board_name, req.max_images, user_token, installation_id=req.installation_id)
+    return _publish_to_xdm_server(mindset_id, req.board_name, req.max_images, user_token, installation_id=req.installation_id, image_ids=req.image_ids)
 
 
-def _publish_to_xdm_server(mindset_id: str, board_name: Optional[str], max_images: int, user_token: str, installation_id: Optional[str] = None):
+class InstallationLinkReq(BaseModel):
+    installation_id: str
+
+
+@app.post("/installations/{mindset_id}")
+def link_installation(
+    mindset_id: str,
+    req: InstallationLinkReq,
+    user: Dict[str, Any] = Depends(verify_user),
+):
+    store = get_store()
+    m = store.get_mindset(mindset_id)
+    if not m:
+        raise HTTPException(404, "mindset not found")
+    m.publish_installation_id = req.installation_id
+    m.updated_at = now_iso()
+    store.save_mindset(m)
+    return {"ok": True, "installation_id": req.installation_id}
+
+
+@app.delete("/installations/{mindset_id}")
+def unlink_installation(
+    mindset_id: str,
+    authorization: Optional[str] = Header(None),
+    user: Dict[str, Any] = Depends(verify_user),
+):
+    store = get_store()
+    m = store.get_mindset(mindset_id)
+    if not m:
+        raise HTTPException(404, "mindset not found")
+    iid = m.publish_installation_id
+    m.publish_installation_id = None
+    m.publish_schedule = None
+    m.updated_at = now_iso()
+    store.save_mindset(m)
+    # Best-effort revoke on xdm_server so the connected-apps row is cleared too.
+    # Don't fail the unlink if the server is unreachable or already revoked.
+    if iid and XDM_SERVER_URL and authorization and authorization.lower().startswith("bearer "):
+        try:
+            httpx.delete(
+                f"{XDM_SERVER_URL.rstrip('/')}/api/installations/{iid}",
+                headers={"Authorization": authorization},
+                timeout=10.0,
+            )
+        except Exception as exc:
+            logging.info(f"server revoke best-effort failed: {exc}")
+    return {"ok": True}
+
+
+def _publish_to_xdm_server(mindset_id: str, board_name: Optional[str], max_images: int, user_token: str, installation_id: Optional[str] = None, image_ids: Optional[List[str]] = None):
     if not XDM_SERVER_URL:
         raise HTTPException(501, "XDM_SERVER_URL not configured")
     store = get_store()
     m = store.get_mindset(mindset_id)
     if not m:
         raise HTTPException(404, "mindset not found")
-    # Prefer liked images; fall back to all surfaced ones.
-    liked = store.list_candidates(mindset_id, status="liked", limit=max_images)
-    surfaced = store.list_candidates(mindset_id, status="surfaced", limit=max_images)
-    cs = (liked + [c for c in surfaced if c.id not in {x.id for x in liked}])[:max_images]
+    if image_ids:
+        # Explicit selection from the UI — publish exactly these, in order.
+        # Look up within the mindset (Firestore can't fetch a candidate by id alone).
+        by_id = {c.id: c for c in store.list_candidates(mindset_id, limit=1000)}
+        cs = [by_id[i] for i in image_ids[:max_images] if i in by_id]
+    else:
+        # Prefer liked images; fall back to all surfaced ones.
+        liked = store.list_candidates(mindset_id, status="liked", limit=max_images)
+        surfaced = store.list_candidates(mindset_id, status="surfaced", limit=max_images)
+        cs = (liked + [c for c in surfaced if c.id not in {x.id for x in liked}])[:max_images]
     if not cs:
         raise HTTPException(400, "no images to publish — like some first, or run a hunt")
     payload = {
