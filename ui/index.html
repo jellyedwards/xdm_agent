@@ -75,6 +75,11 @@ section { margin-bottom: 32px; }
 section h2 { font-size:11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin: 0 0 12px; font-weight: 700; }
 
 .card { background: var(--card); border-radius: 12px; padding: 20px; margin-bottom: 12px; box-shadow: var(--shadow); border: none; }
+.card.intro { padding: 28px 32px; border-top: 3px solid transparent; border-image: linear-gradient(90deg, hotpink, lightblue) 1; }
+.card.intro .intro-title { font-size: 18px; text-transform: none; letter-spacing: -0.01em; color: var(--primary); font-weight: 800; margin: 0 0 12px; }
+.card.intro p { margin: 0 0 12px; font-size: 15px; line-height: 1.65; color: var(--ink); max-width: 70ch; }
+.card.intro p:last-child { margin-bottom: 0; }
+.card.intro b { font-weight: 700; }
 .row { display:flex; gap:12px; align-items:center; }
 .field { display:flex; flex-direction:column; gap:5px; flex:1; }
 .field > label { font-size:12px; font-weight:600; color: var(--muted); padding-left:4px; }
@@ -341,6 +346,6 @@ details[open] > summary { margin-bottom: 12px; }
 </header>
 <main id="app"></main>
 <script type="module" src="/ui/auth.js?v=2"></script>
-<script src="/ui/app.js?v=21"></script>
+<script src="/ui/app.js?v=22"></script>
 </body>
 </html>
