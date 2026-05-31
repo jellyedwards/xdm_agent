@@ -103,6 +103,27 @@ def _session_key(request: Request, user: Optional[Dict[str, Any]]):
     return f"code:{code}:{base}", False
 
 
+def effective_owner(request: Request, user: Optional[Dict[str, Any]]) -> str:
+    """Stable owner id for the caller, signed-in or anonymous.
+
+    Signed-in real users own their data under their Firebase uid. Anonymous
+    visitors are isolated per-browser via the persistent X-Session-Id token the
+    UI stores in localStorage and sends on every request — so each browser only
+    ever sees the mindsets it created, without anyone having to log in."""
+    if user and user.get("uid") and user.get("uid") != "dev":
+        return user["uid"]
+    sid = (request.headers.get("X-Session-Id") or "").strip()
+    base = sid or (request.client.host if request.client else "anon")
+    return f"anon:{base}"
+
+
+def assert_owner(m, request: Request, user: Optional[Dict[str, Any]]):
+    """404 if the mindset is owned by someone other than the caller. Legacy
+    records with no owner stay readable (they predate per-user scoping)."""
+    if m.owner_uid and m.owner_uid != effective_owner(request, user):
+        raise HTTPException(404, "mindset not found")
+
+
 def public_gate(kind: str, request: Request, user: Optional[Dict[str, Any]]):
     """Enforce access code + daily quota for expensive ops when PUBLIC_MODE is on.
     No-op for local/dev and trusted single-tenant deployments."""
@@ -217,7 +238,9 @@ def get_quota(request: Request, user: Optional[Dict[str, Any]] = Depends(verify_
 def create_mindset(req: CreateMindsetReq, request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
     public_gate("mindset", request, user)
     store = get_store()
-    m = Mindset(name=req.name, theme=req.theme, owner_uid=req.owner_uid, serendipity=req.serendipity, tactic_prefs=default_tactic_prefs())
+    # Owner comes from the caller's identity (signed-in uid or anon browser
+    # token), never from the request body — clients can't claim another owner.
+    m = Mindset(name=req.name, theme=req.theme, owner_uid=effective_owner(request, user), serendipity=req.serendipity, tactic_prefs=default_tactic_prefs())
     store.save_mindset(m)
     try:
         m = initialise_mindset_full(m)
@@ -233,6 +256,7 @@ def refresh_dossier(mindset_id: str, request: Request, user: Optional[Dict[str, 
     m = store.get_mindset(mindset_id)
     if not m:
         raise HTTPException(404, "mindset not found")
+    assert_owner(m, request, user)
     m.dossier = build_dossier(m.theme)
     m.dossier_ts = now_iso()
     store.save_mindset(m)
@@ -240,15 +264,18 @@ def refresh_dossier(mindset_id: str, request: Request, user: Optional[Dict[str, 
 
 
 @app.get("/mindset/{mindset_id}")
-def get_mindset(mindset_id: str):
+def get_mindset(mindset_id: str, request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
     m = get_store().get_mindset(mindset_id)
     if not m:
         raise HTTPException(404, "mindset not found")
+    assert_owner(m, request, user)
     return m.model_dump()
 
 
 @app.get("/mindset")
-def list_mindsets(owner_uid: Optional[str] = None):
+def list_mindsets(request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
+    # Always scoped to the caller — each browser/account sees only its own.
+    owner_uid = effective_owner(request, user)
     return [m.model_dump() for m in get_store().list_mindsets(owner_uid=owner_uid)]
 
 
@@ -269,6 +296,7 @@ def hunt(req: HuntReq, request: Request, user: Optional[Dict[str, Any]] = Depend
     m = store.get_mindset(req.mindset_id)
     if not m:
         raise HTTPException(404, "mindset not found")
+    assert_owner(m, request, user)
     public_gate("hunt", request, user)
     # Pre-create the Hunt record so we can return an id immediately and the
     # client can poll while the background thread updates the trace.
@@ -288,7 +316,10 @@ def hunt(req: HuntReq, request: Request, user: Optional[Dict[str, Any]] = Depend
 
 
 @app.get("/hunts/{mindset_id}")
-def list_hunts(mindset_id: str, limit: int = 20):
+def list_hunts(mindset_id: str, request: Request, limit: int = 20, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
+    m = get_store().get_mindset(mindset_id)
+    if m:
+        assert_owner(m, request, user)
     return [h.model_dump() for h in get_store().list_hunts(mindset_id, limit=limit)]
 
 
@@ -302,7 +333,10 @@ def get_hunt(mindset_id: str, hunt_id: str):
 
 
 @app.get("/collection/{mindset_id}")
-def collection(mindset_id: str, status: Optional[str] = None, min_score: float = 7.0, limit: int = 200):
+def collection(mindset_id: str, request: Request, status: Optional[str] = None, min_score: float = 7.0, limit: int = 200, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
+    m = get_store().get_mindset(mindset_id)
+    if m:
+        assert_owner(m, request, user)
     cs = get_store().list_candidates(mindset_id, status=status, limit=limit)
     if status is None:
         # default UI feed: liked always stays; otherwise surfaced + above threshold.
@@ -321,7 +355,10 @@ def collection(mindset_id: str, status: Optional[str] = None, min_score: float =
 
 
 @app.post("/feedback")
-def feedback(req: FeedbackReq):
+def feedback(req: FeedbackReq, request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
+    m = get_store().get_mindset(req.mindset_id)
+    if m:
+        assert_owner(m, request, user)
     res = record_feedback(
         mindset_id=req.mindset_id,
         kind=req.kind,
