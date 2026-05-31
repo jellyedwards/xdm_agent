@@ -352,6 +352,9 @@ def collection(mindset_id: str, request: Request, status: Optional[str] = None, 
     if status is None:
         # default UI feed: liked always stays; otherwise surfaced + above threshold.
         cs = [c for c in cs if c.status == "liked" or (c.status == "surfaced" and (c.judge_score or 0) >= min_score)]
+    # newest-retrieved first — a stable order that doesn't reshuffle when an
+    # image is liked (sorting liked-to-top made the feed jump on every click).
+    cs.sort(key=lambda c: c.found_at or "", reverse=True)
     # tag the latest hunt's items so the UI can show a "new" badge
     latest_hunt_id = None
     hunts = get_store().list_hunts(mindset_id, limit=1)

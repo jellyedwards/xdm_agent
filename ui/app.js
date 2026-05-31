@@ -191,7 +191,11 @@ async function renderMindset(id) {
   ));
   $app.appendChild(el("section", {id:"publish-sec"}));
   $app.appendChild(el("section", {id:"rubric"}));
-  $app.appendChild(el("section", {}, el("h2", {}, "feed"), el("div", {id:"feed", class:"grid"})));
+  $app.appendChild(el("section", {},
+    el("h2", {}, "feed"),
+    el("div", {id:"feed-controls", class:"seg-row", style:"margin-bottom:14px"}),
+    el("div", {id:"feed", class:"grid"}),
+  ));
   $app.appendChild(el("section", {}, el("h2", {}, "recent hunts"), el("div", {id:"hunts"})));
   await reloadMindset(id);
 }
@@ -239,10 +243,7 @@ async function reloadMindset(id) {
     const cs = await api.get(`/collection/${id}`);
     renderPublish(id, m, cs);
     updateQuotaNote();
-    const feed = document.getElementById("feed");
-    feed.replaceChildren();
-    if (!cs.length) feed.appendChild(el("div", {class:"empty"}, "no images yet — try 'hunt now'"));
-    for (const c of cs) feed.appendChild(renderTile(c));
+    renderFeed(id, cs);
 
     const hs = await api.get(`/hunts/${id}`);
     const hunts = document.getElementById("hunts");
@@ -378,6 +379,34 @@ async function buildDossier(id) {
   try { await api.post(`/mindset/${id}/dossier`); }
   catch (e) { alert(e.message); }
   await reloadMindset(id);
+}
+
+let FEED_FILTER = "all";  // all | fresh (new + liked)
+
+function isFresh(c) { return c.is_new || c.status === "liked"; }
+
+function renderFeed(id, cs) {
+  cs = cs || [];
+  const counts = { all: cs.length, fresh: cs.filter(isFresh).length };
+  // don't strand the user on an empty filtered view
+  if (FEED_FILTER === "fresh" && counts.fresh === 0) FEED_FILTER = "all";
+
+  const controls = document.getElementById("feed-controls");
+  if (controls) {
+    const segBtn = (mode, label) =>
+      el("button", {class: FEED_FILTER === mode ? "on" : "", onClick: () => { FEED_FILTER = mode; renderFeed(id, cs); }}, label);
+    controls.replaceChildren(
+      segBtn("all", `all (${counts.all})`),
+      segBtn("fresh", `new & liked (${counts.fresh})`),
+    );
+  }
+
+  const shown = FEED_FILTER === "fresh" ? cs.filter(isFresh) : cs;
+  const feed = document.getElementById("feed");
+  feed.replaceChildren();
+  if (!cs.length) { feed.appendChild(el("div", {class:"empty"}, "no images yet — try 'hunt now'")); return; }
+  if (!shown.length) { feed.appendChild(el("div", {class:"empty"}, "nothing new or liked — switch to ‘all’")); return; }
+  for (const c of shown) feed.appendChild(renderTile(c));
 }
 
 function renderTile(c) {

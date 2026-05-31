@@ -43,7 +43,12 @@ class HuntPlan(BaseModel):
 class JudgeResult(BaseModel):
     description: str
     score: float = Field(ge=0, le=10)
-    reason: str
+    reason: str = Field(
+        description="One or two sentences describing the image's concrete visual "
+        "qualities (subject, composition, colour, light, technique). Shown to the "
+        "user as a caption — never mention the rubric, scoring, or how well it "
+        "matches the theme; just describe what the image shows."
+    )
     tags: List[str] = Field(default_factory=list)
 
 
@@ -131,9 +136,14 @@ Look at the image and return JSON matching:
 {{
   "description": "<one short sentence describing what the image actually shows>",
   "score": <number 0-10, higher = a stronger match for the rubric>,
-  "reason": "<one or two sentences explaining the score with reference to the rubric>",
+  "reason": "<one or two sentences describing the image's concrete visual qualities — subject, composition, colour, light, technique>",
   "tags": [<3-6 short descriptive tags>]
 }}
+
+The rubric only informs the SCORE. The "reason" is shown to the user as a
+caption, so it must describe the image itself — never mention the rubric,
+scoring, or how well it matches (no "this matches the rubric", "fits the
+theme", "strong match", etc.). Just describe what you see.
 
 Be honest. Score below 5 if the image is generic, low quality, or off-rubric.
 Output JSON only.
@@ -629,7 +639,9 @@ JUDGE_INSTRUCTION = (
     "You are the Judge in a visual-curation system. Score the single supplied "
     "image against the supplied rubric and return JSON matching the required "
     "schema. Be honest; score low for generic, low-quality, or off-rubric work. "
-    "Output JSON only."
+    "The rubric only informs the score — the 'reason' is shown to the user as a "
+    "caption, so describe the image's concrete visual qualities and never mention "
+    "the rubric, scoring, or how well it matches the theme. Output JSON only."
 )
 
 scout_agent = None
