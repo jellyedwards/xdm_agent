@@ -26,6 +26,12 @@ DEFAULT_PER_SOURCE = int(os.getenv("DEFAULT_PER_SOURCE", "10"))
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", "7.0"))
 PHASH_NEAR_DUP_THRESHOLD = int(os.getenv("PHASH_NEAR_DUP_THRESHOLD", "10"))
 CURATE_DIVERSITY_THRESHOLD = int(os.getenv("CURATE_DIVERSITY_THRESHOLD", "4"))
+# Hard ceiling on how many candidates get the (expensive) Gemini judge per hunt.
+# A wide hunt can clear ~90 candidates; judging them all is slow and costly with
+# little upside since the curator only keeps ~20. Trim to a source-balanced
+# subset before judging. Anything trimmed isn't persisted, so it can resurface
+# and be judged in a later hunt.
+MAX_JUDGE_PER_HUNT = int(os.getenv("MAX_JUDGE_PER_HUNT", "40"))
 
 
 class PlannedSearch(BaseModel):
@@ -342,6 +348,29 @@ def apply_rights(mindset_id: str, candidates: List[Candidate], allow_unknown: bo
     return out
 
 
+def cap_for_judging(candidates: List[Candidate], cap: int) -> Tuple[List[Candidate], List[Candidate]]:
+    """Trim the candidate set to at most `cap` before judging, keeping the subset
+    source-balanced (round-robin across source_ids) so we don't over-sample
+    whichever source returned the most. Returns (to_judge, skipped)."""
+    if cap <= 0 or len(candidates) <= cap:
+        return candidates, []
+    from collections import defaultdict, deque
+    buckets: Dict[str, deque] = defaultdict(deque)
+    for c in candidates:
+        buckets[c.source_id or "?"].append(c)
+    order = list(buckets.keys())  # stable: first-seen source order
+    kept: List[Candidate] = []
+    while len(kept) < cap and any(buckets.values()):
+        for sid in order:
+            if buckets[sid]:
+                kept.append(buckets[sid].popleft())
+                if len(kept) >= cap:
+                    break
+    kept_ids = {c.id for c in kept}
+    skipped = [c for c in candidates if c.id not in kept_ids]
+    return kept, skipped
+
+
 def judge_one(mindset: Mindset, c: Candidate) -> Candidate:
     rubric = mindset.rubric_text or f"THEME: {mindset.theme}\n(use general design taste)"
     raw = judge_complete(rubric, c.image_url)
@@ -571,13 +600,17 @@ def run_hunt(mindset_id: str, budget: int = None, hunt_id: str = None) -> Hunt:
         h.n_rights_cleared = len(cleared)
         _step("rights_checked", n_cleared=len(cleared), n_dropped=len(unique) - len(cleared))
 
-        _step("judging", of=len(cleared))
+        to_judge, skipped = cap_for_judging(cleared, MAX_JUDGE_PER_HUNT)
+        if skipped:
+            _step("judge_capped", judging=len(to_judge), skipped=len(skipped), cap=MAX_JUDGE_PER_HUNT)
+
+        _step("judging", of=len(to_judge))
         def _on_judge_progress(done, total):
             # only push trace update every ~5 to avoid hammering disk
             if done == total or done % 5 == 0:
                 h.trace.append({"t": now_iso(), "step": "judge_progress", "done": done, "of": total})
                 store.update_hunt(h)
-        judged = judge_batch(m, cleared, on_progress=_on_judge_progress)
+        judged = judge_batch(m, to_judge, on_progress=_on_judge_progress)
         for c in judged:
             c.hunt_id = h.id
             store.save_candidate(c)
