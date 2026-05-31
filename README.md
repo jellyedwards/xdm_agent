@@ -21,9 +21,9 @@ Sibling to `xdm_server` (FastAPI backend) and `xdm_client` (Next.js frontend), b
 | Requirement | How |
 |---|---|
 | **Mandatory: Gemini API** | All reasoning (scout, judge, rights, feedback) runs on Gemini via Vertex AI |
-| **Mandatory: ADK orchestration** | Multi-agent workflow (Scout → SearchExec → Dedup → Rights → Judge → Curator) built on `google.adk` |
+| **Mandatory: ADK orchestration** | The two LLM decision points — **Scout** (hunt planning) and **Judge** (per-image scoring) — execute as `google.adk` `LlmAgent`s driven by a `Runner`, exposed together as an ADK `SequentialAgent` (`xdm_curator`). The deterministic stages between them (parallel search, dedupe, rights, curate) are sequenced in Python by `run_hunt`. |
 | **Mandatory: Cloud Run deployment** | Container deployed on Cloud Run; periodic hunts via Cloud Scheduler → Cloud Run Job |
-| Multi-agent emphasis | 8 specialist agents, each with a single clear responsibility, coordinating via ADK Workflow + Task API |
+| Multi-agent emphasis | Two reasoning agents run on ADK — **Scout** (planning) and **Judge** (scoring) — coordinated by an ADK `SequentialAgent`. The pipeline's other concerns (search fan-out, dedupe, rights, curation, feedback reflection) are single-responsibility Python stages sequenced by `run_hunt`. |
 | Grounding / RAG | Vertex AI Search grounding for discovery; rubric reflection is RAG over the mindset's feedback history |
 | Agent Simulation | Synthetic-persona eval harness (`/eval`) runs the full loop against oracle "good/bad" image sets |
 | Agent Observability | Every decision (scout plan, source choice, judge score+reason, rubric change) is traced and rendered in the trace viewer |

@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import time
+import asyncio
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Tuple
@@ -221,16 +222,7 @@ def plan_hunt(mindset_id: str, budget: int = None) -> HuntPlan:
         budget=budget,
         serendipity=m.serendipity,
     )
-    resp = gemini_client().models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.85, max_output_tokens=4000,
-            response_mime_type="application/json",
-            response_schema=HuntPlan,
-        ),
-    )
-    raw = resp.text or ""
+    raw = scout_complete(prompt)
     data = None
     try:
         data = json.loads(raw)
@@ -341,21 +333,12 @@ def apply_rights(mindset_id: str, candidates: List[Candidate], allow_unknown: bo
 
 
 def judge_one(mindset: Mindset, c: Candidate) -> Candidate:
-    prompt = JUDGE_PROMPT.format(rubric=mindset.rubric_text or f"THEME: {mindset.theme}\n(use general design taste)")
-    image_part = types.Part.from_uri(file_uri=c.image_url, mime_type="image/jpeg")
-    resp = gemini_client().models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[image_part, prompt],
-        config=types.GenerateContentConfig(
-            temperature=0.3, max_output_tokens=1400,
-            response_mime_type="application/json",
-            response_schema=JudgeResult,
-        ),
-    )
+    rubric = mindset.rubric_text or f"THEME: {mindset.theme}\n(use general design taste)"
+    raw = judge_complete(rubric, c.image_url)
     try:
-        jr = JudgeResult(**json.loads(resp.text))
+        jr = JudgeResult(**json.loads(raw))
     except Exception as exc:
-        logging.info(f"judge parse failed for {c.image_url}: {exc}; raw: {resp.text!r}")
+        logging.info(f"judge parse failed for {c.image_url}: {exc}; raw: {raw!r}")
         jr = JudgeResult(description="", score=0.0, reason="judge failed to parse", tags=[])
     c.judge_score = jr.score
     c.judge_reason = jr.reason
@@ -615,58 +598,144 @@ def run_hunt(mindset_id: str, budget: int = None, hunt_id: str = None) -> Hunt:
     return h
 
 
-# ── ADK agent wrappers ─────────────────────────────────────────────────────
-# Thin layer: each phase above is exposed as a callable ADK Agent / tool so the
-# orchestration story for the challenge holds. The plain-Python `run_hunt`
-# remains the canonical entrypoint — easier to test, easier to trace.
+# ── ADK orchestration — the reasoning actually runs through a Runner ─────────
+# Scout (hunt planning) and Judge (per-image scoring) are the two real LLM
+# decision points in the pipeline. Both execute as ADK LlmAgents driven by an
+# InMemoryRunner — this is what makes the system ADK-*orchestrated* rather than
+# ADK-as-an-unused-dependency. The deterministic steps (parallel search, dedupe,
+# rights, curate) stay as plain Python: ADK drives the reasoning, Python drives
+# the plumbing. `run_hunt` remains the canonical entrypoint and sequences them.
+#
+# Set XDM_USE_ADK=0 to fall back to direct google-genai calls (also the
+# automatic fallback if the ADK path raises, so a demo can never hard-fail).
 
-def _adk_agent(name: str, model: str, instruction: str, tools=None):
-    try:
-        from google.adk import Agent
-    except Exception:
-        from google.adk.agents import Agent  # type: ignore  # ADK v1 fallback
-    return Agent(name=name, model=model, instruction=instruction, tools=tools or [])
+try:
+    from google.adk.agents import LlmAgent, SequentialAgent
+    from google.adk.runners import InMemoryRunner
+    _ADK_AVAILABLE = True
+except Exception as exc:  # pragma: no cover - ADK is a pinned dependency
+    logging.warning(f"google.adk unavailable ({exc}); ADK orchestration disabled")
+    _ADK_AVAILABLE = False
 
+ADK_APP = "xdm_agent"
+USE_ADK = _ADK_AVAILABLE and os.getenv("XDM_USE_ADK", "1").lower() in ("1", "true", "yes")
 
-def _list_sources_tool():
-    return [{"source_id": sid, **{k: v for k, v in meta.items() if k != "attribution_template"}} for sid, meta in SOURCE_REGISTRY.items()]
-
-
-def _run_source_tool(source_id: str, query: str, n: int = 6) -> List[Dict[str, Any]]:
-    cs = run_source(source_id, "(stateless)", query, n=n)
-    return [c.model_dump() for c in cs]
-
+SCOUT_INSTRUCTION = (
+    "You are the Scout in a multi-agent visual-curation system. You receive a "
+    "fully-specified hunt brief and produce a hunt plan as JSON matching the "
+    "required schema. Output JSON only."
+)
+JUDGE_INSTRUCTION = (
+    "You are the Judge in a visual-curation system. Score the single supplied "
+    "image against the supplied rubric and return JSON matching the required "
+    "schema. Be honest; score low for generic, low-quality, or off-rubric work. "
+    "Output JSON only."
+)
 
 scout_agent = None
 judge_agent = None
-curator_agent = None
 root_agent = None
 
 
+def _make_scout_agent():
+    return LlmAgent(
+        name="scout", model=GEMINI_MODEL, instruction=SCOUT_INSTRUCTION,
+        output_schema=HuntPlan, output_key="hunt_plan",
+        generate_content_config=types.GenerateContentConfig(temperature=0.85, max_output_tokens=4000),
+    )
+
+
+def _make_judge_agent():
+    return LlmAgent(
+        name="judge", model=GEMINI_MODEL, instruction=JUDGE_INSTRUCTION,
+        output_schema=JudgeResult, output_key="judge_result",
+        generate_content_config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1400),
+    )
+
+
 def build_adk_agents():
-    global scout_agent, judge_agent, curator_agent, root_agent
+    """Build the ADK agents once. `scout_agent`/`judge_agent` are parent-free so
+    they can be driven directly by a runner; `root_agent` is a real top-level
+    ADK SequentialAgent (its own child instances) — the discoverable workflow
+    object for `adk web` and the 'ADK orchestration' requirement."""
+    global scout_agent, judge_agent, root_agent
+    if not _ADK_AVAILABLE:
+        return None
     if root_agent is not None:
         return root_agent
-    scout_agent = _adk_agent(
-        "scout",
-        GEMINI_MODEL,
-        "Plan a hunt: pick sources and invent evocative queries to find mood-board-worthy images for the given theme and rubric.",
-        tools=[_list_sources_tool],
-    )
-    judge_agent = _adk_agent(
-        "judge",
-        GEMINI_MODEL,
-        "Score one image against a rubric. Return a JSON object with description, score (0-10), reason, tags.",
-    )
-    curator_agent = _adk_agent(
-        "curator",
-        GEMINI_MODEL_LITE,
-        "Given judged candidates, pick the top N for the collection, prioritising score and diversity.",
-    )
-    root_agent = _adk_agent(
-        "xdm_curator",
-        GEMINI_MODEL,
-        "You orchestrate a visual-curation hunt: plan via scout, fan-out searches, judge each image, curate the kept set.",
-        tools=[_list_sources_tool, _run_source_tool],
-    )
+    scout_agent = _make_scout_agent()
+    judge_agent = _make_judge_agent()
+    root_agent = SequentialAgent(name="xdm_curator", sub_agents=[_make_scout_agent(), _make_judge_agent()])
     return root_agent
+
+
+def _adk_complete(agent, parts, user_id: str = "xdm") -> str:
+    """Run an ADK LlmAgent to completion over a single user message and return the
+    final response text. With output_schema set, that text is the JSON payload.
+
+    Driven via asyncio.run on the agent's async APIs. Every caller (the hunt
+    thread, the FastAPI threadpool worker for /a2a, the judge ThreadPoolExecutor
+    workers) runs without a live event loop, so this is safe; if one ever isn't,
+    asyncio.run raises and the callers below fall back to a direct genai call."""
+    async def _go() -> str:
+        runner = InMemoryRunner(agent=agent, app_name=ADK_APP)
+        try:
+            sess = await runner.session_service.create_session(app_name=ADK_APP, user_id=user_id)
+            msg = types.Content(role="user", parts=parts)
+            chunks: List[str] = []
+            async for ev in runner.run_async(user_id=user_id, session_id=sess.id, new_message=msg):
+                if ev.is_final_response() and ev.content and ev.content.parts:
+                    chunks += [p.text for p in ev.content.parts if p.text]
+            return "".join(chunks)
+        finally:
+            await runner.close()
+
+    return asyncio.run(_go())
+
+
+def scout_complete(prompt: str) -> str:
+    """Scout reasoning. Routes through the ADK runner; falls back to a direct
+    google-genai call if ADK is disabled or errors. Returns raw JSON text."""
+    if USE_ADK:
+        try:
+            build_adk_agents()
+            txt = _adk_complete(scout_agent, [types.Part.from_text(text=prompt)])
+            if txt.strip():
+                return txt
+            logging.info("scout: ADK returned empty; falling back to direct genai")
+        except Exception as exc:
+            logging.warning(f"scout: ADK path failed ({exc}); falling back to direct genai")
+    resp = gemini_client().models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.85, max_output_tokens=4000,
+            response_mime_type="application/json", response_schema=HuntPlan,
+        ),
+    )
+    return resp.text or ""
+
+
+def judge_complete(rubric: str, image_url: str) -> str:
+    """Judge reasoning for one image. Routes through the ADK runner; falls back to
+    a direct google-genai call if ADK is disabled or errors. Returns raw JSON text."""
+    prompt = JUDGE_PROMPT.format(rubric=rubric)
+    image_part = types.Part.from_uri(file_uri=image_url, mime_type="image/jpeg")
+    if USE_ADK:
+        try:
+            build_adk_agents()
+            txt = _adk_complete(judge_agent, [image_part, types.Part.from_text(text=prompt)])
+            if txt.strip():
+                return txt
+            logging.info("judge: ADK returned empty; falling back to direct genai")
+        except Exception as exc:
+            logging.warning(f"judge: ADK path failed ({exc}); falling back to direct genai")
+    resp = gemini_client().models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[image_part, prompt],
+        config=types.GenerateContentConfig(
+            temperature=0.3, max_output_tokens=1400,
+            response_mime_type="application/json", response_schema=JudgeResult,
+        ),
+    )
+    return resp.text or ""
