@@ -146,10 +146,17 @@ async function renderHome() {
     const ms = await api.get("/mindset");
     if (!ms.length) list.appendChild(el("div", {class:"empty"}, "no mindsets yet"));
     for (const m of ms) {
-      list.appendChild(el("a", {href: `#/mindset/${m.id}`},
+      const meta = el("div", {class:"mindset-meta"},
         el("div", {class:"name"}, m.name),
         el("div", {class:"theme"}, `${m.theme} · v${m.version}${m.dossier ? " · researched" : ""}`),
-      ));
+      );
+      const kids = [meta];
+      if (m.preview_urls && m.preview_urls.length) {
+        kids.push(el("div", {class:"mindset-previews"},
+          ...m.preview_urls.map(u => el("img", {src: u, loading:"lazy", referrerpolicy:"no-referrer"})),
+        ));
+      }
+      list.appendChild(el("a", {href: `#/mindset/${m.id}`}, ...kids));
     }
   } catch (e) { list.appendChild(el("div", {class:"empty"}, `error: ${e.message}`)); }
 }

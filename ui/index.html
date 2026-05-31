@@ -116,7 +116,9 @@ input[type=text]:focus, textarea:focus, select:focus {
 textarea { border-radius: 16px; resize: vertical; }
 
 .mindset-list a {
-  display:block;
+  display:flex;
+  align-items:center;
+  gap:16px;
   padding: 18px 20px;
   background: white;
   border-radius:12px;
@@ -127,8 +129,20 @@ textarea { border-radius: 16px; resize: vertical; }
   transition: all .18s ease;
 }
 .mindset-list a:hover { border-color: var(--accent); box-shadow: var(--shadow-lift); transform: translateY(-1px); }
+.mindset-list .mindset-meta { flex:1 1 auto; min-width:0; }
 .mindset-list .name { font-weight: 700; font-size: 16px; }
 .mindset-list .theme { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.mindset-list .mindset-previews { display:flex; gap:6px; flex:0 0 auto; }
+.mindset-list .mindset-previews img {
+  width:44px; height:44px;
+  object-fit:cover;
+  border-radius:8px;
+  border:1px solid var(--border);
+  background:#f0f0f0;
+}
+@media (max-width: 520px) {
+  .mindset-list .mindset-previews img:nth-child(n+3) { display:none; }
+}
 
 .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
 .tile {
