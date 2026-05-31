@@ -276,7 +276,18 @@ def get_mindset(mindset_id: str, request: Request, user: Optional[Dict[str, Any]
 def list_mindsets(request: Request, user: Optional[Dict[str, Any]] = Depends(verify_user_optional)):
     # Always scoped to the caller — each browser/account sees only its own.
     owner_uid = effective_owner(request, user)
-    return [m.model_dump() for m in get_store().list_mindsets(owner_uid=owner_uid)]
+    store = get_store()
+    out = []
+    for m in store.list_mindsets(owner_uid=owner_uid):
+        d = m.model_dump()
+        # A few preview thumbnails for the home list — liked first, then
+        # top-scored surfaced (list_candidates already sorts that way).
+        cands = store.list_candidates(m.id, limit=20)
+        previews = [c.thumbnail_url or c.image_url for c in cands
+                    if c.status == "liked" or (c.status == "surfaced" and (c.judge_score or 0) >= 7.0)]
+        d["preview_urls"] = previews[:4]
+        out.append(d)
+    return out
 
 
 @app.get("/mindset/{mindset_id}/rubric_versions")
@@ -516,12 +527,19 @@ def _publish_to_xdm_server(mindset_id: str, board_name: Optional[str], max_image
             } for c in cs
         ],
     }
-    r = httpx.post(
-        f"{XDM_SERVER_URL.rstrip('/')}/board_from_external_agent",
-        json=payload,
-        headers={"Authorization": f"Bearer {user_token}"},
-        timeout=30.0,
-    )
+    target = f"{XDM_SERVER_URL.rstrip('/')}/board_from_external_agent"
+    try:
+        r = httpx.post(
+            target,
+            json=payload,
+            headers={"Authorization": f"Bearer {user_token}"},
+            timeout=30.0,
+        )
+    except httpx.RequestError as exc:
+        # DNS/connect/timeout — the server was never reached. Surface a clear 502
+        # instead of an opaque 500 so the UI can tell the user it's a config issue.
+        logging.warning(f"publish: could not reach design xdm at {target}: {exc!r}")
+        raise HTTPException(502, f"could not reach design xdm server ({XDM_SERVER_URL}): {exc}")
     if r.status_code >= 400:
         raise HTTPException(r.status_code, f"design xdm responded {r.status_code}: {r.text[:300]}")
     return r.json()

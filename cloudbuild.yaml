@@ -36,7 +36,7 @@ substitutions:
   _REGION: europe-west2
   _MAX_INSTANCES: "3"
   _QUOTA_DAILY_GLOBAL: "600"
-  _XDM_SERVER_URL: ""   # set to the design xdm server origin to enable publish-to-moodboard
+  _XDM_SERVER_URL: "https://xdm-server.onrender.com"   # design xdm server origin; enables publish-to-moodboard
 
 timeout: 1800s
 
