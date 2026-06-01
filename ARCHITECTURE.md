@@ -19,9 +19,10 @@
             │                           │                                │
             ▼                           ▼                                ▼
    ┌────────────────┐          ┌────────────────┐              ┌────────────────┐
-   │ HuntWorkflow   │          │ FeedbackAgent  │              │ PublisherAgent │
-   │ (ADK Workflow) │          │  (rubric LLM)  │              │ (A2A surface)  │
-   └────┬───────────┘          └────────┬───────┘              └────────────────┘
+   │ run_hunt       │          │ FeedbackAgent  │              │ PublisherAgent │
+   │ (Python; calls │          │  (rubric LLM)  │              │ (A2A surface)  │
+   │  ADK reasoning)│          └────────┬───────┘              └────────────────┘
+   └────┬───────────┘                   │
         │                               │
         │ scout → search → dedupe       │ reflect → version
         │  → rights → judge → curator   │
@@ -32,7 +33,7 @@
    │  mindsets/  versions/  candidates/  hunts/  users/          │
    └────────────────────────────────────────────────────────────┘
 
-   Tools layer (ADK FunctionTools):
+   Tools layer (plain Python functions, called directly):
    ├── Source tools (Unsplash, Pexels, Pixabay, Met, Smithsonian,
    │   Europeana, NASA, Wikimedia, Google CSE, Vertex AI Search,
    │   SerpAPI, Brave, Evident IOTY scraper, Nikon Small World scraper)
@@ -41,7 +42,7 @@
    └── Notify tools (digest email/webhook, design xdm publish)
 
    Triggers:
-   └── Cloud Scheduler → Cloud Run Job → HuntWorkflow(mindset_id)
+   └── Cloud Scheduler → Cloud Run Job → run_hunt(mindset_id)
 ```
 
 ## Layout
@@ -50,8 +51,8 @@ Matches xdm_server's style: flat sibling files, no nested packages. Functions li
 
 ```
 xdm_agent/
-├── main.py             # FastAPI app, routes, HuntWorkflow wiring, agent runtime entrypoint
-├── agents.py           # All ADK agents (scout, search_exec, dedupe, rights, judge, curator, feedback, scheduler, publisher) + the Workflow
+├── main.py             # FastAPI app, routes, run_hunt wiring, agent runtime entrypoint
+├── agents.py           # The hunt pipeline: ADK LlmAgents for the two reasoning nodes (scout, judge) + a SequentialAgent root (xdm_curator); the deterministic stages (search, dedupe, rights, curator, feedback) as plain Python; run_hunt sequences them
 ├── sources.py          # Source registry + every source query function (Unsplash, Pexels, Pixabay, Met, Smithsonian, Europeana, NASA, Wikimedia, Google CSE, Vertex Search, SerpAPI, Brave, IOTY scraper, Nikon Small World scraper) + scraping helpers
 ├── storage.py          # Pydantic models (Mindset, Candidate, Hunt, FeedbackEvent) + Firestore backend + in-memory backend, picked by STORAGE_BACKEND env var
 ├── rubric.py           # Initial rubric seeding, reflection (rewrite from feedback), tactic bandit update, versioning
@@ -80,21 +81,22 @@ xdm_agent/
 
 ## Components
 
-The agents below live as functions/classes inside `agents.py`. Each is one ADK Agent or Workflow node.
+The stages below live as functions inside `agents.py` (feedback in `rubric.py`). Only the two reasoning nodes — **Scout** and **Judge** — run on ADK as `LlmAgent`s; everything else is plain Python. `run_hunt` is the canonical sequencer.
 
-| Agent | Role |
-|---|---|
-| `MindsetAgent` | State controller, loads/saves Mindset |
-| `ScoutAgent` (LlmAgent) | Plans a hunt: chooses sources + queries from tactic prefs |
-| `SearchExecutor` (ParallelAgent) | Fanout to source tools |
-| `DedupeAgent` | URL/phash/embedding dedup |
-| `RightsAgent` | Licence + attribution determination |
-| `JudgeAgent` (multimodal LlmAgent) | Gemini scores each candidate |
-| `CuratorAgent` | Diversity-aware ranking + persistence |
-| `FeedbackAgent` | Rubric reflection + tactic update |
-| `SchedulerAgent` | Cron config + hunt budgeting |
-| `PublisherAgent` | A2A surface |
-| `HuntWorkflow` | Top-level ADK Workflow wiring the hunt pipeline |
+| Stage | Runs on | Role |
+|---|---|---|
+| `MindsetAgent` | Python | State controller, loads/saves Mindset |
+| **Scout** | **ADK `LlmAgent`** | Plans a hunt: chooses sources + queries from tactic prefs (`output_schema=HuntPlan`) |
+| `execute_searches` | Python (`ThreadPoolExecutor`) | Parallel fan-out to source functions |
+| `dedupe_candidates` | Python | URL/phash/embedding dedup |
+| `apply_rights` | Python | Licence + attribution determination |
+| **Judge** | **ADK `LlmAgent` (multimodal)** | Gemini scores each candidate (`output_schema=JudgeResult`) |
+| `curate` | Python | Diversity-aware ranking + persistence |
+| `FeedbackAgent` | Python + Gemini (`rubric.py`) | Rubric reflection + tactic update |
+| `SchedulerAgent` | Python | Cron config + hunt budgeting |
+| `PublisherAgent` | Python | A2A surface |
+| `xdm_curator` | ADK `SequentialAgent` | Discoverable root composing Scout → Judge (for `adk web`) |
+| `run_hunt` | Python | Top-level sequencer wiring the hunt pipeline |
 
 ### Tool signatures
 
@@ -106,7 +108,7 @@ def search_pexels(mindset, query, n=10): ...
 # etc.
 ```
 
-They return a list of `Candidate` records. ADK wraps them as `FunctionTool`s in `agents.py`.
+They return a list of `Candidate` records. `execute_searches` in `agents.py` calls them directly across a `ThreadPoolExecutor` — they are not wrapped as ADK `FunctionTool`s (the Scout plans *which* sources to call; the calling itself is plain Python).
 
 ### Storage
 
@@ -114,14 +116,14 @@ They return a list of `Candidate` records. ADK wraps them as `FunctionTool`s in 
 
 ## Data flow — a hunt, in detail
 
-1. **Trigger** — Cloud Scheduler hits `/hunt/{mindset_id}` (or user clicks "Hunt now").
+1. **Trigger** — Cloud Scheduler hits `/hunt/{mindset_id}` (or user clicks "Hunt now"). `run_hunt` sequences the steps below.
 2. **MindsetAgent** loads the mindset from Firestore (rubric, tactics, recent collection).
-3. **ScoutAgent** calls Gemini with mindset + tactic_prefs + recent hunt summaries; returns a `HuntPlan` of 5–15 `{source_id, query, why}` entries.
-4. **SearchExecutor** (ADK parallel) invokes each source tool with its query. Each tool returns raw candidates (image_url, source_page_url, captured metadata).
-5. **DedupeAgent** canonicalises URLs, computes phash (lazy fetch of thumbnail), filters intra-batch dupes and known existing items.
-6. **RightsAgent** looks up each source in the registry. For ambiguous sources (e.g. web search hits) it fetches the page and tries to detect a licence (image_meta, common embed patterns, Creative Commons markers). Drops anything unresolved.
-7. **JudgeAgent** issues batched Gemini multimodal calls (image URL + rubric → score+reason+tags). Concurrency capped to respect quotas.
-8. **CuratorAgent** applies score threshold, diversity penalty (penalise candidates close in embedding to already-kept), and ranks.
+3. **Scout** (ADK `LlmAgent`, via `InMemoryRunner`) is called with mindset + tactic_prefs + recent hunt summaries; its `output_schema=HuntPlan` returns 5–15 `{source_id, query, why}` entries.
+4. **`execute_searches`** (plain Python, `ThreadPoolExecutor`) invokes each source function with its query. Each returns raw candidates (image_url, source_page_url, captured metadata).
+5. **`dedupe_candidates`** canonicalises URLs, computes phash (lazy fetch of thumbnail), filters intra-batch dupes and known existing items.
+6. **`apply_rights`** looks up each source in the registry. For ambiguous sources (e.g. web search hits) it fetches the page and tries to detect a licence (image_meta, common embed patterns, Creative Commons markers). Drops anything unresolved.
+7. **Judge** (ADK `LlmAgent`, multimodal) scores each candidate — `Part.from_uri(image)` + rubric → `JudgeResult` (score+reason+tags). Run across a `ThreadPoolExecutor`, concurrency capped to respect quotas.
+8. **`curate`** applies score threshold, diversity penalty (penalise candidates close in embedding to already-kept), and ranks.
 9. **Persistence** — kept candidates land in `mindsets/{id}/candidates/`. A `Hunt` record summarises the run.
 10. **Notify** — user gets a UI badge / optional email digest.
 

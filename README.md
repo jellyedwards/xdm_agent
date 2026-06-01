@@ -41,7 +41,7 @@ USER ─► │  MindsetAgent│  owns rubric + tactic prefs + feedback history
         ┌──────────────┐
         │  ScoutAgent  │  picks sources + invents queries
         └──────┬───────┘
-               ▼  (ADK Workflow fan-out)
+               ▼  (parallel fan-out — Python ThreadPoolExecutor)
    ┌────────┬──┴────┬──────────┬───────────┐
    ▼        ▼       ▼          ▼           ▼
  Stock   Museum   Web      Competition  Vertex AI
