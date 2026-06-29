@@ -12,7 +12,7 @@ from google.genai import types
 from dotenv import load_dotenv
 
 from storage import Mindset, Candidate, Hunt, ThemeDossier, get_store, now_iso, new_id
-from sources import SOURCE_REGISTRY, SEARCH_FUNCS, run_source
+from sources import SOURCE_REGISTRY, SEARCH_FUNCS, run_source, FALLBACK_SOURCES, source_ready, domain_of
 from dedup import canonicalise_url, url_fingerprint, phash_url, is_near_duplicate
 from rubric import gemini_client, GEMINI_MODEL, GEMINI_MODEL_LITE, TACTICS, default_tactic_prefs, initialise_mindset_rubric, reflect_if_pending
 
@@ -39,6 +39,11 @@ class PlannedSearch(BaseModel):
     query: str
     tactic: str
     why: str = ""
+    # Optional domain to site:-scope a web search to (e.g. "nikonsmallworld.com").
+    # Only honoured by the Google-backed web sources (serpapi/google_cse);
+    # ignored elsewhere. Used by the prizewinner_archive tactic to pull from
+    # competition sites the dossier surfaced.
+    site: str = ""
 
 
 class HuntPlan(BaseModel):
@@ -72,7 +77,7 @@ CURRENT RUBRIC (what the judge will reward):
 LIKED IMAGES (positive signal — find more in this vein):
 {liked_brief}
 
-AVAILABLE SOURCES (id : kind : licensing posture):
+AVAILABLE SOURCES (id : kind : licensing posture — each carries a "how to query it" hint you MUST honour):
 {source_list}
 
 TACTICS (your moves — bias toward higher-scored ones, but don't ignore the others):
@@ -89,7 +94,8 @@ PRODUCE A HUNT PLAN. Return a JSON object matching this schema:
       "source_id": "<one of the source ids>",
       "query": "<the exact query string to send to that source>",
       "tactic": "<one of the tactic names>",
-      "why": "<one sentence on why this combination>"
+      "why": "<one sentence on why this combination>",
+      "site": "<OPTIONAL domain to restrict a WEB search to, e.g. nikonsmallworld.com — use only with web sources (serpapi/google_cse), mainly for prizewinner_archive; leave empty otherwise>"
     }}
   ]
 }}
@@ -97,9 +103,11 @@ PRODUCE A HUNT PLAN. Return a JSON object matching this schema:
 Rules:
 - Produce {budget} searches.
 - Use the dossier's suggested queries and known competitions/creators as seed material, but invent variations and new angles too — don't just copy them.
-- Favour evocative, non-literal queries — not the theme word itself. Invent metaphors, technique names, material descriptors, adjacent concepts.
+- Phrase every query for the source it targets, honouring that source's "how to query it" hint. Keyword/museum/scientific APIs (e.g. met, smithsonian, wikimedia, gbif, bhl, rijksmuseum, flickr) only match literal, short noun terms — metaphors and long evocative phrases return ZERO results there. Save metaphors, technique names, material descriptors and other evocative phrasing for the stock and web sources (e.g. unsplash, pexels, serpapi, google_cse) that tolerate it. The same concept should be worded differently depending on which source you send it to.
+- Don't just fire the theme word itself; still aim for striking, non-obvious angles — but express them in each source's native vocabulary.
 - If LIKED IMAGES are listed, dedicate at least 2 searches to finding more in their vein — try the creator_pursuit tactic on their creators, or queries that capture what made them strong.
 - Use a mix of sources matching the tactic. Competition archives for prizewinner_archive. Museums for vintage_archive. Stock + web for feature_term_query. Web for adjacent_theme. Etc.
+- For the prizewinner_archive tactic, set source_id to "serpapi" and set "site" to a competition's domain from the dossier (shown as "site: <domain>") so the search is scoped to that competition's own gallery. (Use serpapi rather than google_cse here — google_cse only returns Creative-Commons images, which competition winners usually are not.) Leave "site" empty for every other tactic and source.
 - Serendipity dial is {serendipity:.2f} — at high values, include 1-2 deliberately surprising probes (e.g. negative_space_probe).
 - Each query should plausibly return images this rubric would score well.
 
@@ -159,7 +167,11 @@ Output JSON only.
 def _source_list_for_prompt() -> str:
     lines = []
     for sid, meta in SOURCE_REGISTRY.items():
-        lines.append(f"  - {sid} : {meta['kind']} : {meta['license_default']}")
+        hint = meta.get("search_hint", "")
+        line = f"  - {sid} : {meta['kind']} : {meta['license_default']}"
+        if hint:
+            line += f"\n      how to query it: {hint}"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -194,7 +206,10 @@ def _dossier_brief_for_scout(d) -> str:
     if d.subgenres:
         out.append("  Subgenres: " + ", ".join(f"{s.name}" for s in d.subgenres[:8]))
     if d.competitions:
-        out.append("  Competitions/showcases: " + ", ".join(c.name for c in d.competitions[:8]))
+        out.append("  Competitions/showcases (use the domain to site:-scope a web search):")
+        for c in d.competitions[:8]:
+            dom = domain_of(c.url) if getattr(c, "url", "") else ""
+            out.append(f"    - {c.name}" + (f" — site: {dom}" if dom else " — (no URL known)"))
     if d.canonical_creators:
         out.append("  Canonical creators: " + ", ".join(c.name for c in d.canonical_creators[:10]))
     if d.adjacent_themes:
@@ -266,7 +281,7 @@ def plan_hunt(mindset_id: str, budget: int = None) -> HuntPlan:
     for s in plan.searches:
         if s.source_id not in SEARCH_FUNCS:
             continue
-        key = (s.source_id, s.query.lower())
+        key = (s.source_id, s.query.lower(), (getattr(s, "site", "") or "").lower())
         if key in seen:
             continue
         seen.add(key)
@@ -278,10 +293,14 @@ def plan_hunt(mindset_id: str, budget: int = None) -> HuntPlan:
 def execute_searches(mindset_id: str, plan: HuntPlan, per_source: int = None, on_source_done=None) -> List[Candidate]:
     per_source = per_source or DEFAULT_PER_SOURCE
     candidates: List[Candidate] = []
+    total = len(plan.searches)
+    tried_by_query: Dict[str, set] = {}      # query.lower() -> source_ids already run for it
+    zero_hits: List[PlannedSearch] = []      # planned searches that returned nothing
     with ThreadPoolExecutor(max_workers=SOURCE_CONCURRENCY) as pool:
         futures = {}
         for s in plan.searches:
-            fut = pool.submit(run_source, s.source_id, mindset_id, s.query, per_source)
+            site = getattr(s, "site", "") or ""
+            fut = pool.submit(run_source, s.source_id, mindset_id, s.query, per_source, site)
             futures[fut] = s
         done_n = 0
         for fut in as_completed(futures):
@@ -291,15 +310,77 @@ def execute_searches(mindset_id: str, plan: HuntPlan, per_source: int = None, on
             except Exception as exc:
                 logging.info(f"source {s.source_id} threw: {exc}")
                 got = []
+            tried_by_query.setdefault(s.query.lower(), set()).add(s.source_id)
             for c in got:
-                c.discovered_via = {"agent": "scout", "tactic": s.tactic, "source_id": s.source_id, "query": s.query, "why": s.why}
+                c.discovered_via = {"agent": "scout", "tactic": s.tactic, "source_id": s.source_id, "query": s.query, "why": s.why, "site": getattr(s, "site", "") or ""}
                 candidates.append(c)
             done_n += 1
-            logging.info(f"source {s.source_id} for {s.query!r}: {len(got)} candidates ({done_n}/{len(plan.searches)})")
+            logging.info(f"source {s.source_id} for {s.query!r}: {len(got)} candidates ({done_n}/{total})")
             if on_source_done:
-                try: on_source_done(s, got, done_n, len(plan.searches))
+                try: on_source_done(s, got, done_n, total)
                 except Exception as exc: logging.info(f"on_source_done hook failed: {exc}")
+            if not got:
+                zero_hits.append(s)
+
+    # A 0-hit doesn't mean the subject is irrelevant — often it's just absent
+    # from that niche source. Re-issue each 0-hit query against a broad catch-all
+    # source it hasn't tried yet (keyless first), so genuinely relevant subjects
+    # still surface. See _run_fallback_searches.
+    if zero_hits:
+        candidates += _run_fallback_searches(
+            mindset_id, zero_hits, tried_by_query, per_source,
+            base_done=total, on_source_done=on_source_done,
+        )
     return candidates
+
+
+def _run_fallback_searches(mindset_id: str, zero_hits: List[PlannedSearch], tried_by_query: Dict[str, set],
+                           per_source: int, base_done: int, on_source_done=None) -> List[Candidate]:
+    """Cross-source fallback for searches that returned zero results.
+
+    For each 0-hit search, pick the first FALLBACK_SOURCES entry that (a) hasn't
+    already been tried for that query and (b) is source_ready, and re-run the
+    same query there. Bounded to one fallback per 0-hit; fallbacks are never
+    themselves re-fallen-back. The `of` reported to on_source_done is extended
+    by the number of fallback jobs so the UI progress counter stays coherent.
+    """
+    jobs: List[Tuple[PlannedSearch, str]] = []
+    for s in zero_hits:
+        tried = tried_by_query.setdefault(s.query.lower(), set())
+        for fb in FALLBACK_SOURCES:
+            if fb in tried:
+                continue
+            ok, _ = source_ready(fb)
+            if not ok:
+                continue
+            jobs.append((s, fb))
+            tried.add(fb)   # reserve so two 0-hits of the same query don't both pick it
+            break
+    if not jobs:
+        return []
+
+    out: List[Candidate] = []
+    of = base_done + len(jobs)
+    done = base_done
+    with ThreadPoolExecutor(max_workers=SOURCE_CONCURRENCY) as pool:
+        futures = {pool.submit(run_source, fb, mindset_id, s.query, per_source): (s, fb) for (s, fb) in jobs}
+        for fut in as_completed(futures):
+            s, fb = futures[fut]
+            try:
+                got = fut.result() or []
+            except Exception as exc:
+                logging.info(f"fallback {fb} threw: {exc}")
+                got = []
+            for c in got:
+                c.discovered_via = {"agent": "scout", "tactic": s.tactic, "source_id": fb, "query": s.query, "why": s.why, "site": "", "fallback_from": s.source_id}
+                out.append(c)
+            done += 1
+            logging.info(f"fallback {fb} for {s.query!r} (was {s.source_id} -> 0): {len(got)} candidates")
+            if on_source_done:
+                fb_s = PlannedSearch(source_id=fb, query=s.query, tactic=f"fallback<-{s.source_id}", why=s.why)
+                try: on_source_done(fb_s, got, done, of)
+                except Exception as exc: logging.info(f"on_source_done hook failed: {exc}")
+    return out
 
 
 def dedupe_candidates(mindset_id: str, candidates: List[Candidate]) -> List[Candidate]:

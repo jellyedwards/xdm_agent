@@ -26,6 +26,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://unsplash.com/license",
         "attribution_template": "Photo by {creator} on Unsplash",
         "rights_status_default": "clear",
+        "search_hint": "modern editorial photos; literal subject + a mood/style word ('foggy forest path'); evocative phrasing ok",
         "requires_env": ["UNSPLASH_ACCESS_KEY"],
     },
     "pexels": {
@@ -34,6 +35,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.pexels.com/license/",
         "attribution_template": "Photo by {creator} from Pexels",
         "rights_status_default": "clear",
+        "search_hint": "modern photos; literal subject + mood/style words; evocative phrasing ok",
         "requires_env": ["PEXELS_API_KEY"],
     },
     "pixabay": {
@@ -42,6 +44,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://pixabay.com/service/license-summary/",
         "attribution_template": "Image by {creator} from Pixabay",
         "rights_status_default": "clear",
+        "search_hint": "broad stock; short generic nouns (textures, patterns, single objects); avoid long phrases",
         "requires_env": ["PIXABAY_API_KEY"],
     },
     "met": {
@@ -50,6 +53,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.metmuseum.org/about-the-met/policies-and-documents/open-access",
         "attribution_template": "{title}, {creator}, The Met",
         "rights_status_default": "clear",
+        "search_hint": "keyword API: literal object/material/culture terms ('porcelain vase', 'samurai armour'); not metaphors",
     },
     "smithsonian": {
         "display_name": "Smithsonian", "kind": "museum", "hotlink_ok": True,
@@ -57,6 +61,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.si.edu/openaccess",
         "attribution_template": "{title}, Smithsonian",
         "rights_status_default": "clear",
+        "search_hint": "keyword API: literal subject/specimen/object names; not metaphors",
     },
     "europeana": {
         "display_name": "Europeana", "kind": "museum", "hotlink_ok": True,
@@ -64,6 +69,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.europeana.eu/en/rights",
         "attribution_template": "{title} — {creator} ({provider})",
         "rights_status_default": "caveat",
+        "search_hint": "keyword API: literal subjects, historical/European terms; short phrases",
         "requires_env": ["EUROPEANA_API_KEY"],
     },
     "nasa": {
@@ -72,6 +78,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.nasa.gov/nasa-brand-center/images-and-media/",
         "attribution_template": "{title} / NASA",
         "rights_status_default": "clear",
+        "search_hint": "literal space subjects ('nebula', 'aurora', mission or instrument names)",
     },
     "wikimedia": {
         "display_name": "Wikimedia Commons", "kind": "museum", "hotlink_ok": True,
@@ -79,6 +86,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://commons.wikimedia.org/wiki/Commons:Licensing",
         "attribution_template": "{title} — {creator}, Wikimedia Commons",
         "rights_status_default": "caveat",
+        "search_hint": "keyword API: literal named subjects, species, or places; short terms, not metaphors",
     },
     # ── Open cultural / scientific sources (mirror of xdm_server endpoints) ──
     "vanda": {
@@ -87,6 +95,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.vam.ac.uk/info/va-image-licensing",
         "attribution_template": "{title} — {creator}, V&A",
         "rights_status_default": "caveat",
+        "search_hint": "keyword API: literal design/material terms ('Art Nouveau textile', 'lacquer box')",
     },
     "artic": {
         "display_name": "Art Institute of Chicago", "kind": "museum", "hotlink_ok": True,
@@ -94,6 +103,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.artic.edu/open-access",
         "attribution_template": "{title} — {creator}, Art Institute of Chicago",
         "rights_status_default": "clear",
+        "search_hint": "keyword API: literal art subject, medium, or artist name",
     },
     "cleveland": {
         "display_name": "Cleveland Museum of Art", "kind": "museum", "hotlink_ok": True,
@@ -101,6 +111,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.clevelandart.org/open-access",
         "attribution_template": "{title} — {creator}, Cleveland Museum of Art",
         "rights_status_default": "clear",
+        "search_hint": "keyword API: literal art subject, medium, or culture",
     },
     "wellcome": {
         "display_name": "Wellcome Collection", "kind": "museum", "hotlink_ok": True,
@@ -108,6 +119,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://wellcomecollection.org/",
         "attribution_template": "{title} — {creator}, Wellcome Collection",
         "rights_status_default": "caveat",
+        "search_hint": "keyword API: literal anatomy/medical/specimen terms ('dissection', 'microscope')",
     },
     "loc": {
         "display_name": "Library of Congress", "kind": "museum", "hotlink_ok": True,
@@ -115,6 +127,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.loc.gov/legal/",
         "attribution_template": "{title} — {creator}",
         "rights_status_default": "caveat",
+        "search_hint": "keyword API: literal place/era/event ('1930s dust bowl', 'tenement')",
     },
     "gbif": {
         "display_name": "GBIF", "kind": "nature", "hotlink_ok": True,
@@ -122,6 +135,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.gbif.org/terms",
         "attribution_template": "{title} — {creator}, via GBIF",
         "rights_status_default": "caveat",
+        "search_hint": "scientific or common species names only ('Lepidoptera', 'bracket fungus'); one taxon per query",
     },
     "openverse": {
         "display_name": "Openverse", "kind": "stock", "hotlink_ok": True,
@@ -129,6 +143,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://openverse.org/",
         "attribution_template": "{title} — {creator}, via Openverse",
         "rights_status_default": "caveat",
+        "search_hint": "CC aggregator; literal subjects in short phrases; weak on metaphor",
     },
     "openi": {
         "display_name": "Open-i (NLM)", "kind": "science", "hotlink_ok": True,
@@ -136,6 +151,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://openi.nlm.nih.gov/",
         "attribution_template": "{title} — {creator}, Open-i / NLM",
         "rights_status_default": "caveat",
+        "search_hint": "keyword API: literal biomedical terms ('histology', 'fluorescence microscopy', cell type)",
     },
     "rijksmuseum": {
         "display_name": "Rijksmuseum", "kind": "museum", "hotlink_ok": True,
@@ -143,6 +159,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://data.rijksmuseum.nl/",
         "attribution_template": "{title} — {creator}, Rijksmuseum",
         "rights_status_default": "clear",
+        "search_hint": "matches title/description only: literal subject words ('still life', 'tulip', 'windmill')",
     },
     "harvard": {
         "display_name": "Harvard Art Museums", "kind": "museum", "hotlink_ok": True,
@@ -150,6 +167,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.harvardartmuseums.org/collections/api",
         "attribution_template": "{title} — {creator}, Harvard Art Museums",
         "rights_status_default": "caveat",
+        "search_hint": "keyword API: literal art subject, medium, or culture",
         "requires_env": ["HARVARD_ART_API_KEY"],
     },
     "bhl": {
@@ -158,6 +176,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.biodiversitylibrary.org/terms",
         "attribution_template": "{title} — {creator}, BHL",
         "rights_status_default": "caveat",
+        "search_hint": "keyword API: literal taxonomic/natural-history terms ('orchid plate', genus name)",
         "requires_env": ["BHL_API_KEY"],
     },
     "flickr": {
@@ -166,14 +185,16 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.flickr.com/creativecommons/",
         "attribution_template": "{title} — {creator}, Flickr",
         "rights_status_default": "caveat",
+        "search_hint": "weak fuzzy match: 2-3 short noun keywords or tags, not long descriptive phrases",
         "requires_env": ["FLICKR_API_KEY"],
     },
     "google_cse": {
         "display_name": "Google Search", "kind": "web", "hotlink_ok": False,
-        "license_default": "Unknown — web search",
+        "license_default": "Creative Commons / public domain (CC-filtered) — verify per item",
         "license_url": None,
         "attribution_template": "via {source_host}",
-        "rights_status_default": "unknown",
+        "rights_status_default": "caveat",
+        "search_hint": "broad web, CC-filtered: evocative or very specific phrases both fine; good for named subjects",
         "requires_env": ["GOOGLE_CSE_API_KEY", "GOOGLE_CSE_CX"],
     },
     "vertex_search": {
@@ -182,6 +203,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": None,
         "attribution_template": "via {source_host}",
         "rights_status_default": "unknown",
+        "search_hint": "broad web: evocative or specific phrases fine",
         "requires_env": ["GOOGLE_CLOUD_PROJECT", "GOOGLE_VERTEX_SEARCH_APP_ID"],
     },
     "serpapi": {
@@ -190,6 +212,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": None,
         "attribution_template": "via {source_host}",
         "rights_status_default": "unknown",
+        "search_hint": "broad web: evocative or specific phrases fine; best for specific named subjects (rights unknown — site:-scope to a curated domain to mark editorial)",
         "requires_env": ["SERPAPI_API_KEY"],
     },
     "evident_ioty": {
@@ -198,6 +221,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://evidentscientific.com/en/ioty-gallery",
         "attribution_template": "{title} — {creator} ({affiliation}), Evident IOTY {year}",
         "rights_status_default": "caveat",
+        "search_hint": "small curated microscopy set; category or year terms",
     },
     "nikon_small_world": {
         "display_name": "Nikon Small World", "kind": "competition", "hotlink_ok": True,
@@ -205,6 +229,7 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "license_url": "https://www.nikonsmallworld.com/about-us/copyright",
         "attribution_template": "{title} — {creator}, Nikon Small World {year}",
         "rights_status_default": "caveat",
+        "search_hint": "photomicrography competition; category/year terms (not yet active)",
         "stub": True,
     },
 }
@@ -245,8 +270,16 @@ def _attribution(source_id: str, **fields) -> str:
 
 
 def _rights_status(license_text: Optional[str]) -> str:
-    """Map a per-item licence string to clear|caveat for open-source results."""
+    """Map a per-item licence string to clear|caveat for open-source results.
+
+    NonCommercial / NoDerivatives CC variants are checked FIRST and downgraded to
+    "caveat": they contain "cc by" as a substring (e.g. "CC BY-NC-SA") but
+    restrict reuse, so they must never be reported as "clear" (free to use).
+    """
     t = (license_text or "").lower()
+    restricted = ("-nc", "-nd", "noncommercial", "non-commercial", "noderiv", "no-deriv")
+    if any(k in t for k in restricted):
+        return "caveat"
     open_markers = ("cc0", "public domain", "publicdomain", "pdm", "cc by",
                     "cc-by", "no known copyright", "government work")
     return "clear" if any(k in t for k in open_markers) else "caveat"
@@ -1151,12 +1184,44 @@ _FLICKR_LICENSES = {
 }
 # The Biodiversity Heritage Library's Flickr photostream (curated plates).
 _BHL_FLICKR_NSID = "61021753@N02"
+# Licence band for broad passes: every reusable CC variant + Commons/CC0/PDM +
+# US-gov work (codes 1-10) — i.e. everything except 0 (All Rights Reserved).
+_FLICKR_OPEN_LICENSES = "1,2,3,4,5,6,7,8,9,10"
+
+# Generic words to drop when reducing a query to keyword/tag terms — Flickr's
+# full-text match is weak, so trimming to salient nouns broadens recall.
+_FLICKR_STOPWORDS = {
+    "the", "a", "an", "of", "in", "on", "and", "or", "with", "for", "to", "at",
+    "by", "from", "into", "over", "under", "macro", "photo", "image", "picture",
+    "shot", "closeup", "close", "up", "style", "light", "lighting", "colour",
+    "color", "abstract", "detail", "view",
+}
+
+
+def _keyword_terms(query: str, max_terms: int = 4) -> List[str]:
+    """Reduce a query to a few salient noun-ish keywords for keyword/tag search."""
+    terms: List[str] = []
+    for t in re.findall(r"[A-Za-z][A-Za-z0-9-]+", query or ""):
+        tl = t.lower()
+        if len(tl) < 3 or tl in _FLICKR_STOPWORDS or tl in terms:
+            continue
+        terms.append(tl)
+        if len(terms) >= max_terms:
+            break
+    return terms
 
 
 def search_flickr(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
-    """Flickr (free key) — BHL natural-history stream first, then Commons.
+    """Flickr (free key) — progressively broadened until it has n results.
 
-    Public photo search needs only the API key (not the secret).
+    Flickr's full-text `text` match is weak (effectively ANDs terms, no fuzz), so
+    long evocative queries return nothing. Start curated/narrow and broaden:
+      1. BHL natural-history photostream (curated public domain), full text
+      2. all-CC / Commons, full text
+      3. all-CC / Commons, text trimmed to key nouns
+      4. all-CC / Commons, those nouns as OR tags (tag_mode=any)
+    Results accumulate across bands (deduped) until n is reached. Public photo
+    search needs only the API key (not the secret).
     """
     logging.info(f"search_flickr: {query=} {n=}")
     api_key = os.environ.get("FLICKR_API_KEY")
@@ -1173,14 +1238,28 @@ def search_flickr(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
                 "media": "photos", "safe_search": 1,
                 "format": "json", "nojsoncallback": 1, **extra,
             },
-            headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 8,
+            # Flickr responds in ~1-2s; keep the timeout tight so the 4-band
+            # broadening loop can't monopolise a worker on a zero-yield query.
+            headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json().get("photos", {}).get("photo", []) or []
 
+    terms = _keyword_terms(query)
+    trimmed = " ".join(terms)
+    bands = [
+        {"text": query, "user_id": _BHL_FLICKR_NSID},
+        {"text": query, "license": _FLICKR_OPEN_LICENSES},
+    ]
+    if trimmed and trimmed != (query or "").strip().lower():
+        bands.append({"text": trimmed, "license": _FLICKR_OPEN_LICENSES})
+    if terms:
+        bands.append({"tags": ",".join(terms), "tag_mode": "any", "license": _FLICKR_OPEN_LICENSES})
+
     out, seen = [], set()
-    # 1) BHL stream (all public domain)  2) broad public-domain / Commons
-    for extra in ({"text": query, "user_id": _BHL_FLICKR_NSID}, {"text": query, "license": "7,9,10"}):
+    for extra in bands:
+        if len(out) >= n:
+            break
         try:
             photos = _flickr(extra)
         except Exception as exc:
@@ -1210,8 +1289,6 @@ def search_flickr(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
             ))
             if len(out) >= n:
                 break
-        if len(out) >= n:
-            break
     return out
 
 
@@ -1244,12 +1321,51 @@ SEARCH_FUNCS = {
 }
 
 
-def run_source(source_id: str, mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+# Broad catch-all sources (in order) used to back-fill a 0-hit search — see
+# agents.execute_searches. Keyless openverse/wikimedia first (their per-item
+# rights survive rights-filtering), then the CC-filtered web search. serpapi is
+# intentionally excluded: its results are rights_status "unknown" and would be
+# dropped before judging.
+FALLBACK_SOURCES = ["openverse", "wikimedia", "google_cse"]
+
+# Sources backed by Google web search, whose query string understands the
+# `site:` operator — so a domain scope can be composed in without changing the
+# per-source function signature. (Vertex AI Search is excluded: its Discovery
+# Engine endpoint takes structured filters, not inline site: operators.)
+_SITE_SCOPED_SOURCES = {"serpapi", "google_cse"}
+
+
+def domain_of(url_or_host: str) -> str:
+    """Normalise a URL or host to a bare domain for site:-scoping ('' if blank).
+    Strips scheme, path and a leading 'www.'."""
+    s = (url_or_host or "").strip()
+    if not s:
+        return ""
+    if "://" not in s:
+        s = "//" + s
+    host = urllib.parse.urlparse(s).hostname or ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def run_source(source_id: str, mindset_id: str, query: str, n: int = 10, site: str = "") -> List[Candidate]:
     fn = SEARCH_FUNCS.get(source_id)
     if not fn:
         raise Exception(f"unknown source: {source_id}")
+    dom = domain_of(site)
+    site_scoped = bool(dom) and source_id in _SITE_SCOPED_SOURCES
+    effective_query = f"{query} site:{dom}" if site_scoped else query
     try:
-        return fn(mindset_id, query, n=n)
+        got = fn(mindset_id, effective_query, n=n) or []
     except Exception as exc:
-        logging.info(f"source {source_id} failed for {query!r}: {exc}")
+        logging.info(f"source {source_id} failed for {effective_query!r}: {exc}")
         return []
+    if site_scoped:
+        # A site:-scoped web search targets a curated domain (e.g. a competition
+        # gallery), so results are editorial — mark them "caveat" (verify per
+        # item) rather than the web source's default "unknown", which would be
+        # dropped by apply_rights before judging.
+        for c in got:
+            c.rights_status = "caveat"
+            if not c.license_name or "unknown" in c.license_name.lower():
+                c.license_name = f"Editorial / curated source — verify per item ({dom})"
+    return got
