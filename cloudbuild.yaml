@@ -21,7 +21,7 @@ steps:
       - --max-instances=${_MAX_INSTANCES}
       - --no-cpu-throttling   # keep CPU for the background hunt thread (async hunts run after the response)
       - --set-env-vars=STORAGE_BACKEND=firestore,GOOGLE_GENAI_USE_VERTEXAI=false,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION},PUBLIC_MODE=1,AGENT_CLIENT_ID=xdm_agent_v1,QUOTA_DAILY_HUNTS=20,QUOTA_DAILY_MINDSETS=20,QUOTA_DAILY_GLOBAL=${_QUOTA_DAILY_GLOBAL},XDM_SERVER_URL=${_XDM_SERVER_URL}
-      - --set-secrets=UNSPLASH_ACCESS_KEY=unsplash-access-key:latest,PEXELS_API_KEY=pexels-api-key:latest,PIXABAY_API_KEY=pixabay-api-key:latest,GOOGLE_CSE_API_KEY=google-cse-api-key:latest,GOOGLE_CSE_CX=google-cse-cx:latest,SERPAPI_API_KEY=serpapi-api-key:latest,A2A_SHARED_SECRET=a2a-shared-secret:latest,JUDGE_ACCESS_CODES=judge-access-codes:latest,FIREBASE_SERVICE_ACCOUNT=firebase-service-account:latest,AGENT_CLIENT_SECRET=agent-client-secret:latest,GEMINI_API_KEY=gemini-api-key:latest
+      - --set-secrets=UNSPLASH_ACCESS_KEY=unsplash-access-key:latest,PEXELS_API_KEY=pexels-api-key:latest,PIXABAY_API_KEY=pixabay-api-key:latest,GOOGLE_CSE_API_KEY=google-cse-api-key:latest,GOOGLE_CSE_CX=google-cse-cx:latest,SERPAPI_API_KEY=serpapi-api-key:latest,A2A_SHARED_SECRET=a2a-shared-secret:latest,JUDGE_ACCESS_CODES=judge-access-codes:latest,FIREBASE_SERVICE_ACCOUNT=firebase-service-account:latest,AGENT_CLIENT_SECRET=agent-client-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,HARVARD_ART_API_KEY=harvard-art-api-key:latest,BHL_API_KEY=bhl-api-key:latest,FLICKR_API_KEY=flickr-api-key:latest,FLICKR_SECRET=flickr-secret:latest
 
 # Secrets expected in Secret Manager (create once: gcloud secrets create <name> --data-file=-):
 #   unsplash-access-key, pexels-api-key, pixabay-api-key, google-cse-api-key,
@@ -29,6 +29,10 @@ steps:
 #   judge-access-codes        comma-separated codes, e.g. "GFS-JUDGE-2026"
 #   firebase-service-account  base64 of the design-xdm service-account JSON
 #   agent-client-secret       shared HMAC secret; matches xdm_server AGENT_CLIENT_SECRETS
+#   harvard-art-api-key, bhl-api-key, flickr-api-key   free keys for the open
+#                             cultural/scientific image sources (mirror xdm_server)
+#   flickr-secret             Flickr API secret (stored for completeness; the
+#                             public photo search only needs flickr-api-key)
 # Gemini runs through Vertex (GOOGLE_GENAI_USE_VERTEXAI=true) — no API key needed.
 # --max-instances is the cost ceiling; QUOTA_DAILY_GLOBAL is the wallet backstop.
 

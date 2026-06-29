@@ -30,6 +30,18 @@ Each row is a candidate source for the curator to hunt across. The registry in `
 | NASA Images | API | ✓ | Public domain | "{title} / NASA" | Hubble, JWST, microscopy, etc. |
 | NASA APOD | Feed | ✓ | Public domain | "{title} — Astronomy Picture of the Day" | Daily feed, great signal |
 | Wikimedia Commons | API | ✓ | Per-item, mostly CC-BY-SA | Wikimedia template | Huge surface; needs licence parsing |
+| V&A (Victoria & Albert) | API | ✓ | Mixed — verify per object | "{title} — {creator}, V&A" | Keyless IIIF; best for design/material culture |
+| Art Institute of Chicago | API | ✓ | Public Domain / CC0 (verify) | "{title} — {creator}, Art Institute of Chicago" | Keyless IIIF; fine art & graphic design |
+| Cleveland Museum of Art | API | ✓ | Open Access — many CC0 | "{title} — {creator}, Cleveland Museum of Art" | Keyless; classical art & ornament |
+| Wellcome Collection | API | ✓ | Mostly CC-BY/CC0 (per-item) | "{title} — {creator}, Wellcome Collection" | Keyless IIIF; science, medicine, the body |
+| Library of Congress | API | ✓ | Rights vary — many no known restrictions | "{title} — Library of Congress" | Keyless loc.gov JSON; place & social history |
+| GBIF | API | ✓ | Per-item CC (often CC-BY/NC) | "{title} — {creator}, via GBIF" | Keyless; wild nature, species, botanical |
+| Openverse | API | ✓ | Open / CC — varies per item | "{title} — {creator}, via Openverse" | Keyless CC aggregator; broad photo/illustration |
+| Open-i (NLM) | API | ✓ | Rights vary by article (per-item) | "{title} — {creator}, Open-i / NLM" | Keyless; biomedical figures/microscopy (slow API) |
+| Rijksmuseum | API | ✓ | Mostly CC0 / Public Domain | "{title} — Rijksmuseum" | Keyless Data Services (JSON-LD, 3-hop resolve) |
+| Harvard Art Museums | API | ✓ | Rights vary — verify reuse | "{title} — {creator}, Harvard Art Museums" | Needs `HARVARD_ART_API_KEY` (free) |
+| Biodiversity Heritage Library | API | ✓ | Mostly public domain (per-item) | "{title} — {creator}, BHL" | Needs `BHL_API_KEY` (free); illustration plates only |
+| Flickr (Commons / CC) | API | ✓ | Per-item Flickr licence (CC/PD) | "{title} — {creator}, Flickr" | Needs `FLICKR_API_KEY` (free; secret unused) |
 
 ## Web search — gateways to everything else
 

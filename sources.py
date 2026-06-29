@@ -80,6 +80,94 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "attribution_template": "{title} — {creator}, Wikimedia Commons",
         "rights_status_default": "caveat",
     },
+    # ── Open cultural / scientific sources (mirror of xdm_server endpoints) ──
+    "vanda": {
+        "display_name": "Victoria & Albert Museum", "kind": "museum", "hotlink_ok": True,
+        "license_default": "Mixed — verify per object",
+        "license_url": "https://www.vam.ac.uk/info/va-image-licensing",
+        "attribution_template": "{title} — {creator}, V&A",
+        "rights_status_default": "caveat",
+    },
+    "artic": {
+        "display_name": "Art Institute of Chicago", "kind": "museum", "hotlink_ok": True,
+        "license_default": "Public Domain / CC0 (verify per item)",
+        "license_url": "https://www.artic.edu/open-access",
+        "attribution_template": "{title} — {creator}, Art Institute of Chicago",
+        "rights_status_default": "clear",
+    },
+    "cleveland": {
+        "display_name": "Cleveland Museum of Art", "kind": "museum", "hotlink_ok": True,
+        "license_default": "Open Access — many CC0 (verify per item)",
+        "license_url": "https://www.clevelandart.org/open-access",
+        "attribution_template": "{title} — {creator}, Cleveland Museum of Art",
+        "rights_status_default": "clear",
+    },
+    "wellcome": {
+        "display_name": "Wellcome Collection", "kind": "museum", "hotlink_ok": True,
+        "license_default": "Mostly CC-BY / CC0 — verify per item",
+        "license_url": "https://wellcomecollection.org/",
+        "attribution_template": "{title} — {creator}, Wellcome Collection",
+        "rights_status_default": "caveat",
+    },
+    "loc": {
+        "display_name": "Library of Congress", "kind": "museum", "hotlink_ok": True,
+        "license_default": "Rights vary — many no known restrictions; verify per item",
+        "license_url": "https://www.loc.gov/legal/",
+        "attribution_template": "{title} — {creator}",
+        "rights_status_default": "caveat",
+    },
+    "gbif": {
+        "display_name": "GBIF", "kind": "nature", "hotlink_ok": True,
+        "license_default": "Per-item CC licence (often CC-BY / CC-BY-NC) — verify",
+        "license_url": "https://www.gbif.org/terms",
+        "attribution_template": "{title} — {creator}, via GBIF",
+        "rights_status_default": "caveat",
+    },
+    "openverse": {
+        "display_name": "Openverse", "kind": "stock", "hotlink_ok": True,
+        "license_default": "Open / Creative Commons — varies per item",
+        "license_url": "https://openverse.org/",
+        "attribution_template": "{title} — {creator}, via Openverse",
+        "rights_status_default": "caveat",
+    },
+    "openi": {
+        "display_name": "Open-i (NLM)", "kind": "science", "hotlink_ok": True,
+        "license_default": "Rights vary by source article — verify per item",
+        "license_url": "https://openi.nlm.nih.gov/",
+        "attribution_template": "{title} — {creator}, Open-i / NLM",
+        "rights_status_default": "caveat",
+    },
+    "rijksmuseum": {
+        "display_name": "Rijksmuseum", "kind": "museum", "hotlink_ok": True,
+        "license_default": "Mostly CC0 / Public Domain — verify per item",
+        "license_url": "https://data.rijksmuseum.nl/",
+        "attribution_template": "{title} — {creator}, Rijksmuseum",
+        "rights_status_default": "clear",
+    },
+    "harvard": {
+        "display_name": "Harvard Art Museums", "kind": "museum", "hotlink_ok": True,
+        "license_default": "Rights vary — verify reuse",
+        "license_url": "https://www.harvardartmuseums.org/collections/api",
+        "attribution_template": "{title} — {creator}, Harvard Art Museums",
+        "rights_status_default": "caveat",
+        "requires_env": ["HARVARD_ART_API_KEY"],
+    },
+    "bhl": {
+        "display_name": "Biodiversity Heritage Library", "kind": "nature", "hotlink_ok": True,
+        "license_default": "Mostly public domain — verify per item",
+        "license_url": "https://www.biodiversitylibrary.org/terms",
+        "attribution_template": "{title} — {creator}, BHL",
+        "rights_status_default": "caveat",
+        "requires_env": ["BHL_API_KEY"],
+    },
+    "flickr": {
+        "display_name": "Flickr (Commons / CC)", "kind": "photo", "hotlink_ok": True,
+        "license_default": "Per-item Flickr licence (CC / public domain) — verify",
+        "license_url": "https://www.flickr.com/creativecommons/",
+        "attribution_template": "{title} — {creator}, Flickr",
+        "rights_status_default": "caveat",
+        "requires_env": ["FLICKR_API_KEY"],
+    },
     "google_cse": {
         "display_name": "Google Search", "kind": "web", "hotlink_ok": False,
         "license_default": "Unknown — web search",
@@ -154,6 +242,14 @@ def _attribution(source_id: str, **fields) -> str:
         return t.format(**{k: (v or "") for k, v in fields.items()})
     except Exception:
         return t
+
+
+def _rights_status(license_text: Optional[str]) -> str:
+    """Map a per-item licence string to clear|caveat for open-source results."""
+    t = (license_text or "").lower()
+    open_markers = ("cc0", "public domain", "publicdomain", "pdm", "cc by",
+                    "cc-by", "no known copyright", "government work")
+    return "clear" if any(k in t for k in open_markers) else "caveat"
 
 
 def search_unsplash(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
@@ -596,6 +692,529 @@ def search_nikon_small_world(mindset_id: str, query: str, n: int = 10) -> List[C
     return []
 
 
+# ───── Open cultural / scientific sources ─────────────────────────────────────
+# Ports of the xdm_server /search_* endpoints. Each hits a free source, builds
+# best-first Candidate lists, and lets the hunt's judge pick the keepers. The
+# server-side equivalents live in xdm_server/main.py; keep the two in sync.
+
+# Some CDNs (loc.gov, Wikimedia, Openverse, Art Institute) reject blank or
+# generic UAs, so reuse the descriptive module UA above for all of them.
+
+def search_artic(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Art Institute of Chicago open API (no key, IIIF images)."""
+    logging.info(f"search_artic: {query=} {n=}")
+    r = requests.get(
+        "https://api.artic.edu/api/v1/artworks/search",
+        params={"q": query, "fields": "id,title,image_id,artist_display", "limit": min(n * 2, 30)},
+        headers={"AIC-User-Agent": UA, "User-Agent": UA},
+        timeout=HTTP_TIMEOUT + 8,
+    )
+    if r.status_code != 200:
+        raise Exception(f"artic {r.status_code}: {r.text[:200]}")
+    data = r.json()
+    iiif = (data.get("config") or {}).get("iiif_url", "https://www.artic.edu/iiif/2")
+    out = []
+    for a in data.get("data", []):
+        image_id = a.get("image_id")
+        if not image_id:
+            continue
+        page = f"https://www.artic.edu/artworks/{a.get('id')}"
+        title = a.get("title") or query
+        creator = (a.get("artist_display") or "Art Institute of Chicago").split("\n")[0]
+        out.append(_candidate(
+            mindset_id, "artic", f"{iiif}/{image_id}/full/843,/0/default.jpg", page,
+            title=title, creator=creator,
+            attribution=_attribution("artic", title=title, creator=creator),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_cleveland(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Cleveland Museum of Art open-access API (no key)."""
+    logging.info(f"search_cleveland: {query=} {n=}")
+    r = requests.get(
+        "https://openaccess-api.clevelandart.org/api/artworks/",
+        params={"q": query, "has_image": 1, "limit": min(n * 2, 30)},
+        headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 8,
+    )
+    if r.status_code != 200:
+        raise Exception(f"cleveland {r.status_code}: {r.text[:200]}")
+    out = []
+    for a in r.json().get("data", []):
+        imgs = a.get("images") or {}
+        # web (jpg) preferred; print is a bigger jpg; skip 'full' (huge TIFF).
+        u = (imgs.get("web") or {}).get("url") or (imgs.get("print") or {}).get("url")
+        if not u:
+            continue
+        creators = a.get("creators") or []
+        creator = creators[0].get("description") if creators else "Cleveland Museum of Art"
+        title = a.get("title") or query
+        out.append(_candidate(
+            mindset_id, "cleveland", u, a.get("url") or "",
+            title=title, creator=creator,
+            attribution=_attribution("cleveland", title=title, creator=creator),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_vanda(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Victoria & Albert Museum collections API v2 (no key, IIIF)."""
+    logging.info(f"search_vanda: {query=} {n=}")
+    r = requests.get(
+        "https://api.vam.ac.uk/v2/objects/search",
+        params={"q": query, "images_exist": "true", "page_size": min(n * 2, 30)},
+        headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 8,
+    )
+    if r.status_code != 200:
+        raise Exception(f"vanda {r.status_code}: {r.text[:200]}")
+    out = []
+    for rec in r.json().get("records", []):
+        base = (rec.get("_images") or {}).get("_iiif_image_base_url")
+        if not base:
+            continue
+        sysnum = rec.get("systemNumber")
+        page = f"https://collections.vam.ac.uk/item/{sysnum}" if sysnum else ""
+        maker = rec.get("_primaryMaker") or {}
+        creator = maker.get("name") or "Victoria and Albert Museum"
+        title = rec.get("_primaryTitle") or rec.get("objectType") or query
+        out.append(_candidate(
+            mindset_id, "vanda", f"{base}full/843,/0/default.jpg", page,
+            title=title, creator=creator,
+            attribution=_attribution("vanda", title=title, creator=creator),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_wellcome(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Wellcome Collection images API (no key, IIIF; per-item licence)."""
+    logging.info(f"search_wellcome: {query=} {n=}")
+    r = requests.get(
+        "https://api.wellcomecollection.org/catalogue/v2/images",
+        params={"query": query, "pageSize": min(n * 2, 30)},
+        headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 8,
+    )
+    if r.status_code != 200:
+        raise Exception(f"wellcome {r.status_code}: {r.text[:200]}")
+    out = []
+    for rec in r.json().get("results", []):
+        thumb = rec.get("thumbnail") or {}
+        info = thumb.get("url")  # .../image/{id}/info.json
+        if not info:
+            continue
+        img = info.replace("/info.json", "/full/880,/0/default.jpg")
+        src = rec.get("source") or {}
+        wid = src.get("id")
+        page = f"https://wellcomecollection.org/works/{wid}" if wid else ""
+        lic = thumb.get("license") or {}
+        title = src.get("title") or query
+        creator = thumb.get("credit") or "Wellcome Collection"
+        out.append(_candidate(
+            mindset_id, "wellcome", img, page,
+            title=title, creator=creator,
+            license_name=lic.get("label") or SOURCE_REGISTRY["wellcome"]["license_default"],
+            license_url=lic.get("url") or SOURCE_REGISTRY["wellcome"]["license_url"],
+            rights_status=_rights_status(lic.get("label")),
+            attribution=_attribution("wellcome", title=title, creator=creator),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_loc(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Library of Congress photos (no key, loc.gov JSON view)."""
+    logging.info(f"search_loc: {query=} {n=}")
+    r = requests.get(
+        "https://www.loc.gov/photos/",
+        params={"q": query, "fo": "json", "c": min(n * 2, 40)},
+        headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 13,
+    )
+    if r.status_code != 200:
+        raise Exception(f"loc {r.status_code}: {r.text[:200]}")
+    try:
+        data = r.json()
+    except Exception:
+        raise Exception("loc: non-JSON response (likely rate-limited)")
+    out = []
+    for rec in data.get("results", []):
+        imgs = rec.get("image_url") or []
+        if not imgs:
+            continue
+        u = imgs[-1].split("#")[0]  # last entry is largest; drop #h=..&w=..
+        if not u.startswith("http"):
+            continue
+        title = rec.get("title")
+        if isinstance(title, list):
+            title = title[0] if title else query
+        page = rec.get("id") or rec.get("url") or ""
+        out.append(_candidate(
+            mindset_id, "loc", u, page,
+            title=title or query, creator="Library of Congress",
+            attribution=_attribution("loc", title=title or query, creator="Library of Congress"),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_openverse(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Openverse — aggregator of openly-licensed images (no key)."""
+    logging.info(f"search_openverse: {query=} {n=}")
+    r = requests.get(
+        "https://api.openverse.org/v1/images/",
+        params={"q": query, "page_size": min(n * 2, 30)},
+        headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 13,
+    )
+    if r.status_code != 200:
+        raise Exception(f"openverse {r.status_code}: {r.text[:200]}")
+    out = []
+    for rec in r.json().get("results", []):
+        u = rec.get("url")
+        if not u:
+            continue
+        lic = " ".join(x for x in [(rec.get("license") or "").upper(), rec.get("license_version") or ""] if x).strip()
+        title = rec.get("title") or query
+        creator = rec.get("creator") or rec.get("source") or "Openverse"
+        out.append(_candidate(
+            mindset_id, "openverse", u, rec.get("foreign_landing_url") or "",
+            creator_url=rec.get("creator_url"),
+            title=title, creator=creator,
+            license_name=lic or SOURCE_REGISTRY["openverse"]["license_default"],
+            license_url=rec.get("license_url"),
+            rights_status=_rights_status(lic),
+            attribution=_attribution("openverse", title=title, creator=creator),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_openi(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Open-i (NLM) — biomedical figures from the literature (no key; slow API)."""
+    logging.info(f"search_openi: {query=} {n=}")
+    r = requests.get(
+        "https://openi.nlm.nih.gov/api/search",
+        params={"query": query, "m": 1, "n": min(n * 2, 30)},
+        headers={"User-Agent": UA}, timeout=40,  # Open-i can be slow to respond
+    )
+    if r.status_code != 200:
+        raise Exception(f"openi {r.status_code}: {r.text[:200]}")
+    out = []
+    for rec in r.json().get("list", []):
+        rel = rec.get("imgLarge") or rec.get("imgThumbLarge") or rec.get("imgThumb")
+        if not rel:
+            continue
+        u = ("https://openi.nlm.nih.gov" + rel) if rel.startswith("/") else rel
+        caption = re.sub(r"<[^>]+>", "", (rec.get("image") or {}).get("caption") or "").strip() or rec.get("title") or query
+        page = rec.get("pmc_url") or rec.get("pubMed_url") or rec.get("fulltext_html_url") or ""
+        journal = rec.get("journal_title") or "Open-i / NLM"
+        out.append(_candidate(
+            mindset_id, "openi", u, page,
+            title=caption, creator=journal,
+            attribution=_attribution("openi", title=caption, creator=journal),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_gbif(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """GBIF occurrence media — wild nature / biodiversity photos (no key)."""
+    logging.info(f"search_gbif: {query=} {n=}")
+    r = requests.get(
+        "https://api.gbif.org/v1/occurrence/search",
+        params={"q": query, "mediaType": "StillImage", "limit": min(n * 3, 40)},
+        headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 13,
+    )
+    if r.status_code != 200:
+        raise Exception(f"gbif {r.status_code}: {r.text[:200]}")
+    out = []
+    for rec in r.json().get("results", []):
+        media = rec.get("media") or []
+        m = next((x for x in media if x.get("identifier")), None)
+        if not m:
+            continue
+        key = rec.get("key")
+        page = m.get("source") or (f"https://www.gbif.org/occurrence/{key}" if key else "")
+        lic = m.get("license") or rec.get("license")
+        creator = m.get("creator") or m.get("rightsHolder") or "GBIF contributor"
+        title = m.get("title") or rec.get("scientificName") or query
+        out.append(_candidate(
+            mindset_id, "gbif", m.get("identifier"), page,
+            title=title, creator=creator,
+            license_name=lic or SOURCE_REGISTRY["gbif"]["license_default"],
+            rights_status=_rights_status(lic),
+            attribution=_attribution("gbif", title=title, creator=creator),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def _rijks_get(url: str) -> dict:
+    """Fetch one Rijksmuseum Linked-Art JSON-LD resource (no key needed)."""
+    r = requests.get(
+        url, headers={"User-Agent": UA, "Accept": "application/json"},
+        timeout=HTTP_TIMEOUT + 3,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _rijks_resolve_image(object_id: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Resolve a HumanMadeObject id to (image_url, title, page_url).
+
+    The keyless Data Services API only returns LOD identifiers, so the image
+    lives three hops away: object → VisualItem (`shows`) → DigitalObject
+    (`digitally_shown_by`) → IIIF image (`access_point`).
+    """
+    obj = _rijks_get(object_id)
+    title = next(
+        (nm.get("content") for nm in (obj.get("identified_by") or [])
+         if nm.get("type") == "Name" and nm.get("content")),
+        None,
+    )
+    page = None
+    for so in obj.get("subject_of") or []:
+        for dc in so.get("digitally_carried_by") or []:
+            if dc.get("format") == "text/html":
+                page = next((ap.get("id") for ap in dc.get("access_point") or [] if ap.get("id")), None)
+                if page:
+                    break
+        if page:
+            break
+
+    shows = obj.get("shows") or []
+    if not shows:
+        return None, title, page
+    vi = _rijks_get(shows[0]["id"])
+    dsb = vi.get("digitally_shown_by") or []
+    if not dsb:
+        return None, title, page
+    do = _rijks_get(dsb[0]["id"])
+    ap = do.get("access_point") or []
+    if not ap:
+        return None, title, page
+    img = ap[0]["id"].replace("/full/max/", "/full/843,/")
+    return img, title, page
+
+
+def search_rijksmuseum(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Rijksmuseum Data Services API (no key; Linked-Art JSON-LD, 3-hop resolve).
+
+    The keyless API matches on title/description only, so merge a title and a
+    description search, then resolve the first few hits to images (each resolve
+    is 3 extra requests, so we cap it).
+    """
+    logging.info(f"search_rijksmuseum: {query=} {n=}")
+    base = "https://data.rijksmuseum.nl/search/collection"
+    seen, object_ids = set(), []
+    for field in ("title", "description"):
+        try:
+            data = _rijks_get(f"{base}?{field}={requests.utils.quote(query)}&imageAvailable=true")
+        except Exception as exc:
+            logging.info(f"rijksmuseum: {field} search failed: {exc}")
+            continue
+        for item in data.get("orderedItems") or []:
+            oid = item.get("id")
+            if oid and oid not in seen:
+                seen.add(oid)
+                object_ids.append(oid)
+
+    out = []
+    for oid in object_ids[: max(n, 4)]:  # cap resolves — each is 3 extra requests
+        try:
+            img, title, page = _rijks_resolve_image(oid)
+        except Exception as exc:
+            logging.info(f"rijksmuseum: resolve failed for {oid}: {exc}")
+            continue
+        if not img:
+            continue
+        title = title or query
+        out.append(_candidate(
+            mindset_id, "rijksmuseum", img, page or oid,
+            title=title, creator="Rijksmuseum",
+            attribution=_attribution("rijksmuseum", title=title, creator="Rijksmuseum"),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_harvard(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Harvard Art Museums API (free key; one-call, direct image)."""
+    logging.info(f"search_harvard: {query=} {n=}")
+    api_key = os.environ.get("HARVARD_ART_API_KEY")
+    if not api_key:
+        return []
+    r = requests.get(
+        "https://api.harvardartmuseums.org/object",
+        params={"apikey": api_key, "q": query, "hasimage": 1, "size": min(n * 2, 30), "sort": "rank"},
+        headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 8,
+    )
+    if r.status_code != 200:
+        raise Exception(f"harvard {r.status_code}: {r.text[:200]}")
+    out = []
+    for rec in r.json().get("records", []):
+        u = rec.get("primaryimageurl")
+        if not u:
+            continue
+        people = rec.get("people") or []
+        creator = people[0].get("name") if people else "Harvard Art Museums"
+        img0 = (rec.get("images") or [{}])[0]
+        copyright_ = img0.get("copyright")
+        title = rec.get("title") or query
+        out.append(_candidate(
+            mindset_id, "harvard", u, rec.get("url") or "",
+            title=title, creator=creator,
+            license_name=copyright_ or SOURCE_REGISTRY["harvard"]["license_default"],
+            rights_status=_rights_status(copyright_),
+            attribution=_attribution("harvard", title=title, creator=creator),
+        ))
+        if len(out) >= n:
+            break
+    return out
+
+
+def search_bhl(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Biodiversity Heritage Library (free key).
+
+    BHL is a scanned-book library, so search publications, then pull only the
+    pages flagged Illustration (the botanical/zoological plates) — skipping text.
+    """
+    logging.info(f"search_bhl: {query=} {n=}")
+    api_key = os.environ.get("BHL_API_KEY")
+    if not api_key:
+        return []
+
+    def _bhl(params):
+        resp = requests.get(
+            "https://www.biodiversitylibrary.org/api3",
+            params={**params, "apikey": api_key, "format": "json"},
+            headers={"User-Agent": UA}, timeout=40,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    found = _bhl({"op": "PublicationSearch", "searchterm": query, "searchtype": "C"})
+    items = [r for r in (found.get("Result") or []) if r.get("ItemID")]
+    if not items:
+        return []
+
+    out = []
+    for item in items[:4]:  # cap item-metadata fetches
+        try:
+            meta = _bhl({"op": "GetItemMetadata", "id": item["ItemID"], "pages": "t", "ocr": "f", "parts": "f"})
+        except Exception as exc:
+            logging.info(f"bhl: item {item['ItemID']} metadata failed: {exc}")
+            continue
+        res = (meta.get("Result") or [None])[0]
+        if not res:
+            continue
+        lic = res.get("LicenseUrl")
+        license_name = res.get("CopyrightStatus") or SOURCE_REGISTRY["bhl"]["license_default"]
+        holder = res.get("HoldingInstitution") or "Biodiversity Heritage Library"
+        title = item.get("Title") or query
+        for p in res.get("Pages") or []:
+            is_illus = any(
+                "illustration" in ((t.get("PageTypeName") if isinstance(t, dict) else t) or "").lower()
+                for t in (p.get("PageTypes") or [])
+            )
+            if not is_illus or not p.get("FullSizeImageUrl"):
+                continue
+            out.append(_candidate(
+                mindset_id, "bhl", p["FullSizeImageUrl"], p.get("PageUrl") or "",
+                title=title, creator=holder,
+                license_name=license_name, license_url=lic,
+                rights_status=_rights_status(license_name),
+                attribution=_attribution("bhl", title=title, creator=holder),
+            ))
+            if len(out) >= n:
+                break
+        if len(out) >= n:
+            break
+    return out
+
+
+# Flickr photo-licence IDs → human label (flickr.photos.licenses.getInfo).
+_FLICKR_LICENSES = {
+    "0": "All Rights Reserved", "1": "CC BY-NC-SA 2.0", "2": "CC BY-NC 2.0",
+    "3": "CC BY-NC-ND 2.0", "4": "CC BY 2.0", "5": "CC BY-SA 2.0",
+    "6": "CC BY-ND 2.0", "7": "No known copyright restrictions (Flickr Commons)",
+    "8": "United States Government Work", "9": "CC0 1.0", "10": "Public Domain Mark 1.0",
+}
+# The Biodiversity Heritage Library's Flickr photostream (curated plates).
+_BHL_FLICKR_NSID = "61021753@N02"
+
+
+def search_flickr(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
+    """Flickr (free key) — BHL natural-history stream first, then Commons.
+
+    Public photo search needs only the API key (not the secret).
+    """
+    logging.info(f"search_flickr: {query=} {n=}")
+    api_key = os.environ.get("FLICKR_API_KEY")
+    if not api_key:
+        return []
+
+    def _flickr(extra):
+        resp = requests.get(
+            "https://api.flickr.com/services/rest/",
+            params={
+                "method": "flickr.photos.search", "api_key": api_key,
+                "extras": "url_l,url_c,owner_name,license,path_alias",
+                "per_page": min(n * 2, 24), "sort": "relevance", "content_type": 1,
+                "media": "photos", "safe_search": 1,
+                "format": "json", "nojsoncallback": 1, **extra,
+            },
+            headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT + 8,
+        )
+        resp.raise_for_status()
+        return resp.json().get("photos", {}).get("photo", []) or []
+
+    out, seen = [], set()
+    # 1) BHL stream (all public domain)  2) broad public-domain / Commons
+    for extra in ({"text": query, "user_id": _BHL_FLICKR_NSID}, {"text": query, "license": "7,9,10"}):
+        try:
+            photos = _flickr(extra)
+        except Exception as exc:
+            logging.info(f"flickr: search {extra} failed: {exc}")
+            continue
+        for p in photos:
+            pid = p.get("id")
+            u = p.get("url_l") or p.get("url_c")
+            if not pid or pid in seen or not u:
+                continue
+            seen.add(pid)
+            owner = p.get("pathalias") or p.get("owner")
+            page = f"https://www.flickr.com/photos/{owner}/{pid}"
+            ptitle = p.get("title") or ""
+            # BHL/scan titles are codes like "n58_w1150"; treat any spaceless
+            # title containing a digit as junk and fall back to the query.
+            is_scan_code = ptitle and " " not in ptitle and any(ch.isdigit() for ch in ptitle)
+            title = query if is_scan_code else (ptitle or query)
+            creator = p.get("ownername") or "Flickr"
+            license_name = _FLICKR_LICENSES.get(str(p.get("license")), "See Flickr photo page")
+            out.append(_candidate(
+                mindset_id, "flickr", u, page,
+                title=title, creator=creator,
+                license_name=license_name,
+                rights_status=_rights_status(license_name),
+                attribution=_attribution("flickr", title=title, creator=creator),
+            ))
+            if len(out) >= n:
+                break
+        if len(out) >= n:
+            break
+    return out
+
+
 SEARCH_FUNCS = {
     "unsplash": search_unsplash,
     "pexels": search_pexels,
@@ -605,6 +1224,18 @@ SEARCH_FUNCS = {
     "europeana": search_europeana,
     "nasa": search_nasa,
     "wikimedia": search_wikimedia,
+    "vanda": search_vanda,
+    "artic": search_artic,
+    "cleveland": search_cleveland,
+    "wellcome": search_wellcome,
+    "loc": search_loc,
+    "gbif": search_gbif,
+    "openverse": search_openverse,
+    "openi": search_openi,
+    "rijksmuseum": search_rijksmuseum,
+    "harvard": search_harvard,
+    "bhl": search_bhl,
+    "flickr": search_flickr,
     "google_cse": search_google_cse,
     "vertex_search": search_vertex_search,
     "serpapi": search_serpapi,
