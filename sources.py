@@ -1321,6 +1321,21 @@ SEARCH_FUNCS = {
 }
 
 
+# The open cultural/scientific batch added 2026-06-29. The hunt form's "include
+# new sources" toggle gates these; unticked = only the classic set we had before.
+NEW_SOURCES = frozenset({
+    "vanda", "artic", "cleveland", "wellcome", "loc", "gbif", "openverse",
+    "openi", "rijksmuseum", "harvard", "bhl", "flickr",
+})
+
+
+def allowed_source_ids(include_new: bool) -> set:
+    """Source ids a hunt may use. include_new=False restricts to the classic set
+    (everything except the 2026-06-29 batch), reproducing the prior behaviour."""
+    allowed = set(SOURCE_REGISTRY.keys())
+    return allowed if include_new else (allowed - NEW_SOURCES)
+
+
 # Broad catch-all sources (in order) used to back-fill a 0-hit search — see
 # agents.execute_searches. Keyless openverse/wikimedia first (their per-item
 # rights survive rights-filtering), then the CC-filtered web search. serpapi is

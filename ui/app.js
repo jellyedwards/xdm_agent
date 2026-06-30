@@ -202,6 +202,11 @@ async function renderMindset(id) {
       el("div", { class: "row", style: "margin-top:8px" },
         el("button", { onClick: () => saveDirection(id) }, "save direction"),
         el("button", { class: "primary", id: "hunt-btn", onClick: () => hunt(id) }, "hunt now"),
+        el("label", { class: "checkbox-row", for: "new-sources-check",
+                      title: "Also search the newer cultural/scientific sources (V&A, Flickr, GBIF, Rijksmuseum, Harvard, BHL, …). Unticked = the classic source set only." },
+          el("input", { type: "checkbox", id: "new-sources-check" }),
+          el("span", {}, "include new sources"),
+        ),
         el("span", { id: "quota-note", class: "theme" }, ""),
       ),
     )
@@ -608,9 +613,10 @@ async function hunt(id) {
   const feed = document.getElementById("feed");
   if (feed) feed.replaceChildren(el("div", { class: "feed-loading" }, el("span", { class: "spinner" }), "starting hunt…"));
 
+  const includeNew = !!document.getElementById("new-sources-check")?.checked;
   let hunt_id;
   try {
-    const r = await api.post("/hunt", { mindset_id: id });
+    const r = await api.post("/hunt", { mindset_id: id, include_new_sources: includeNew });
     hunt_id = r.hunt_id;
   } catch (e) { notifyError(e); resetHuntButton(); return; }
 

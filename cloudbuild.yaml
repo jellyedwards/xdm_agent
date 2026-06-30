@@ -13,7 +13,7 @@ steps:
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
-      - --memory=1Gi
+      - --memory=2Gi   # dedupe decodes many images in memory; 1Gi OOM-killed wide hunts
       - --cpu=1
       - --timeout=300
       - --concurrency=20

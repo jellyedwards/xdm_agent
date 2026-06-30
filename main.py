@@ -166,6 +166,9 @@ class FeedbackReq(BaseModel):
 class HuntReq(BaseModel):
     mindset_id: str
     budget: Optional[int] = None
+    # When True the planner may also use the newer (2026-06-29) cultural/
+    # scientific sources; False (default) restricts to the classic set.
+    include_new_sources: bool = False
 
 
 class A2ACurateReq(BaseModel):
@@ -318,7 +321,8 @@ def hunt(req: HuntReq, request: Request, user: Optional[Dict[str, Any]] = Depend
 
     def _run():
         try:
-            run_hunt(req.mindset_id, budget=req.budget, hunt_id=h.id)
+            run_hunt(req.mindset_id, budget=req.budget, hunt_id=h.id,
+                     include_new_sources=req.include_new_sources)
         except Exception as exc:
             logging.exception(f"background hunt {h.id} failed: {exc}")
 

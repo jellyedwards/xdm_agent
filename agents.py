@@ -12,7 +12,7 @@ from google.genai import types
 from dotenv import load_dotenv
 
 from storage import Mindset, Candidate, Hunt, ThemeDossier, get_store, now_iso, new_id
-from sources import SOURCE_REGISTRY, SEARCH_FUNCS, run_source, FALLBACK_SOURCES, source_ready, domain_of
+from sources import SOURCE_REGISTRY, SEARCH_FUNCS, run_source, FALLBACK_SOURCES, source_ready, domain_of, allowed_source_ids
 from dedup import canonicalise_url, url_fingerprint, phash_url, is_near_duplicate
 from rubric import gemini_client, GEMINI_MODEL, GEMINI_MODEL_LITE, TACTICS, default_tactic_prefs, initialise_mindset_rubric, reflect_if_pending
 
@@ -20,9 +20,14 @@ load_dotenv()
 
 JUDGE_CONCURRENCY = int(os.getenv("JUDGE_CONCURRENCY", "6"))
 SOURCE_CONCURRENCY = int(os.getenv("SOURCE_CONCURRENCY", "8"))
-PHASH_CONCURRENCY = int(os.getenv("PHASH_CONCURRENCY", "8"))
+# Keep phash fan-out modest: each worker decodes an image in memory, and 8-way
+# concurrency on a wide hunt OOM-killed the 1Gi container. 4 + draft-decode (see
+# dedup.phash_url) keeps the peak well bounded.
+PHASH_CONCURRENCY = int(os.getenv("PHASH_CONCURRENCY", "4"))
 DEFAULT_HUNT_BUDGET = int(os.getenv("DEFAULT_HUNT_BUDGET", "20"))
-DEFAULT_PER_SOURCE = int(os.getenv("DEFAULT_PER_SOURCE", "10"))
+# Results fetched per source. 5 (was 10) roughly halves the candidate set a hunt
+# has to download+dedupe, cutting memory and latency.
+DEFAULT_PER_SOURCE = int(os.getenv("DEFAULT_PER_SOURCE", "5"))
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", "7.0"))
 PHASH_NEAR_DUP_THRESHOLD = int(os.getenv("PHASH_NEAR_DUP_THRESHOLD", "10"))
 CURATE_DIVERSITY_THRESHOLD = int(os.getenv("CURATE_DIVERSITY_THRESHOLD", "4"))
@@ -164,9 +169,12 @@ Output JSON only.
 """
 
 
-def _source_list_for_prompt() -> str:
+def _source_list_for_prompt(include_new: bool = True) -> str:
+    allowed = allowed_source_ids(include_new)
     lines = []
     for sid, meta in SOURCE_REGISTRY.items():
+        if sid not in allowed:
+            continue
         hint = meta.get("search_hint", "")
         line = f"  - {sid} : {meta['kind']} : {meta['license_default']}"
         if hint:
@@ -233,7 +241,7 @@ def _liked_brief_for_scout(mindset_id: str, max_n: int = 6) -> str:
     return "\n".join(out)
 
 
-def plan_hunt(mindset_id: str, budget: int = None) -> HuntPlan:
+def plan_hunt(mindset_id: str, budget: int = None, include_new_sources: bool = False) -> HuntPlan:
     store = get_store()
     m = store.get_mindset(mindset_id)
     if not m:
@@ -247,7 +255,7 @@ def plan_hunt(mindset_id: str, budget: int = None) -> HuntPlan:
         dossier_brief=_dossier_brief_for_scout(m.dossier),
         rubric=m.rubric_text or "(rubric not seeded — invent a sensible one)",
         liked_brief=_liked_brief_for_scout(mindset_id),
-        source_list=_source_list_for_prompt(),
+        source_list=_source_list_for_prompt(include_new_sources),
         tactic_list=_tactic_list_for_prompt(m.tactic_prefs),
         recent_queries=_recent_queries_for_prompt(mindset_id),
         budget=budget,
@@ -275,11 +283,14 @@ def plan_hunt(mindset_id: str, budget: int = None) -> HuntPlan:
             PlannedSearch(source_id="evident_ioty", query=m.theme, tactic="prizewinner_archive"),
         ], reasoning="fallback plan (LLM response was unparseable)")
 
-    # filter to known sources, dedup identical (source, query) pairs
+    # filter to known + allowed sources, dedup identical (source, query) pairs.
+    # When include_new_sources is off, the planner shouldn't have picked a new
+    # source (it isn't in the prompt list), but enforce it here too.
+    allowed = allowed_source_ids(include_new_sources)
     seen = set()
     filtered = []
     for s in plan.searches:
-        if s.source_id not in SEARCH_FUNCS:
+        if s.source_id not in SEARCH_FUNCS or s.source_id not in allowed:
             continue
         key = (s.source_id, s.query.lower(), (getattr(s, "site", "") or "").lower())
         if key in seen:
@@ -290,7 +301,7 @@ def plan_hunt(mindset_id: str, budget: int = None) -> HuntPlan:
     return plan
 
 
-def execute_searches(mindset_id: str, plan: HuntPlan, per_source: int = None, on_source_done=None) -> List[Candidate]:
+def execute_searches(mindset_id: str, plan: HuntPlan, per_source: int = None, on_source_done=None, allowed_sources: set = None) -> List[Candidate]:
     per_source = per_source or DEFAULT_PER_SOURCE
     candidates: List[Candidate] = []
     total = len(plan.searches)
@@ -329,13 +340,13 @@ def execute_searches(mindset_id: str, plan: HuntPlan, per_source: int = None, on
     if zero_hits:
         candidates += _run_fallback_searches(
             mindset_id, zero_hits, tried_by_query, per_source,
-            base_done=total, on_source_done=on_source_done,
+            base_done=total, on_source_done=on_source_done, allowed_sources=allowed_sources,
         )
     return candidates
 
 
 def _run_fallback_searches(mindset_id: str, zero_hits: List[PlannedSearch], tried_by_query: Dict[str, set],
-                           per_source: int, base_done: int, on_source_done=None) -> List[Candidate]:
+                           per_source: int, base_done: int, on_source_done=None, allowed_sources: set = None) -> List[Candidate]:
     """Cross-source fallback for searches that returned zero results.
 
     For each 0-hit search, pick the first FALLBACK_SOURCES entry that (a) hasn't
@@ -350,6 +361,8 @@ def _run_fallback_searches(mindset_id: str, zero_hits: List[PlannedSearch], trie
         for fb in FALLBACK_SOURCES:
             if fb in tried:
                 continue
+            if allowed_sources is not None and fb not in allowed_sources:
+                continue   # respect the classic-only toggle (openverse is a new source)
             ok, _ = source_ready(fb)
             if not ok:
                 continue
@@ -616,7 +629,7 @@ def initialise_mindset_full(m: Mindset) -> Mindset:
     return m
 
 
-def run_hunt(mindset_id: str, budget: int = None, hunt_id: str = None) -> Hunt:
+def run_hunt(mindset_id: str, budget: int = None, hunt_id: str = None, include_new_sources: bool = False) -> Hunt:
     store = get_store()
     m = store.get_mindset(mindset_id)
     if not m:
@@ -659,15 +672,16 @@ def run_hunt(mindset_id: str, budget: int = None, hunt_id: str = None) -> Hunt:
             _step("reflect_skipped", reason=str(exc))
 
         _step("planning")
-        plan = plan_hunt(mindset_id, budget=budget)
+        plan = plan_hunt(mindset_id, budget=budget, include_new_sources=include_new_sources)
         h.plan = [s.model_dump() for s in plan.searches]
-        _step("planned", n_searches=len(plan.searches), reasoning=plan.reasoning)
+        _step("planned", n_searches=len(plan.searches), reasoning=plan.reasoning, include_new_sources=include_new_sources)
 
         _step("searching", n_searches=len(plan.searches))
         def _on_source_done(s, got, done_n, total):
             h.trace.append({"t": now_iso(), "step": "source_done", "source_id": s.source_id, "query": s.query, "tactic": s.tactic, "found": len(got), "done": done_n, "of": total})
             store.update_hunt(h)
-        raw = execute_searches(mindset_id, plan, on_source_done=_on_source_done)
+        raw = execute_searches(mindset_id, plan, on_source_done=_on_source_done,
+                               allowed_sources=allowed_source_ids(include_new_sources))
         h.n_candidates = len(raw)
         _step("searched", n_raw=len(raw))
 

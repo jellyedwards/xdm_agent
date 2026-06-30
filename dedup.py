@@ -52,12 +52,34 @@ def fetch_thumb(url: str, timeout: float = 6.0, max_bytes: int = 800_000) -> byt
         return data
 
 
+# Skip phashing any image that would decode to more than this many pixels. JPEGs
+# are scale-decoded via draft() below, but PNG/WebP/GIF have no draft support and
+# decode at full resolution — a small-but-huge-dimension non-JPEG could allocate
+# hundreds of MB of RGB and OOM the container. Dimensions are read from the
+# header (cheap) before any pixel buffer is allocated. ~24 MP keeps the peak
+# bounded even at PHASH_CONCURRENCY; a skipped image just misses near-dup checks.
+_MAX_PHASH_PIXELS = 24_000_000
+
+
 def phash_url(url: str) -> str:
     if not _HAS_IMAGEHASH:
         return ""
     try:
         data = fetch_thumb(url)
-        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img = Image.open(io.BytesIO(data))
+        # Decode JPEGs at reduced scale (no-op for other formats) so a high-res
+        # image doesn't expand to tens of MB of RGB in memory before we shrink
+        # it. With phash run many-at-once this is what keeps dedupe under the
+        # container memory limit.
+        try:
+            img.draft("RGB", (256, 256))
+        except Exception:
+            pass
+        w, h = img.size  # post-draft for JPEG; full size for other formats
+        if w * h > _MAX_PHASH_PIXELS:
+            logging.info(f"phash_url skip oversized {w}x{h}: {url}")
+            return ""
+        img = img.convert("RGB")
         img.thumbnail((256, 256))
         return str(imagehash.phash(img))
     except Exception as exc:
