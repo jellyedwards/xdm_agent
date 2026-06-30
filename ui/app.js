@@ -204,7 +204,7 @@ async function renderMindset(id) {
         el("button", { class: "primary", id: "hunt-btn", onClick: () => hunt(id) }, "hunt now"),
         el("label", { class: "checkbox-row", for: "new-sources-check",
                       title: "Also search the newer cultural/scientific sources (V&A, Flickr, GBIF, Rijksmuseum, Harvard, BHL, …). Unticked = the classic source set only." },
-          el("input", { type: "checkbox", id: "new-sources-check" }),
+          el("input", { type: "checkbox", id: "new-sources-check", checked: true }),
           el("span", {}, "include new sources"),
         ),
         el("span", { id: "quota-note", class: "theme" }, ""),

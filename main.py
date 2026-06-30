@@ -166,9 +166,9 @@ class FeedbackReq(BaseModel):
 class HuntReq(BaseModel):
     mindset_id: str
     budget: Optional[int] = None
-    # When True the planner may also use the newer (2026-06-29) cultural/
-    # scientific sources; False (default) restricts to the classic set.
-    include_new_sources: bool = False
+    # When True (default) the planner may also use the newer (2026-06-29)
+    # cultural/scientific sources; set False to restrict to the classic set.
+    include_new_sources: bool = True
 
 
 class A2ACurateReq(BaseModel):

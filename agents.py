@@ -267,7 +267,7 @@ def _fallback_plan(m, budget: int, include_new_sources: bool) -> HuntPlan:
     return HuntPlan(searches=searches, reasoning="fallback plan (LLM response was unparseable)")
 
 
-def plan_hunt(mindset_id: str, budget: int = None, include_new_sources: bool = False) -> HuntPlan:
+def plan_hunt(mindset_id: str, budget: int = None, include_new_sources: bool = True) -> HuntPlan:
     store = get_store()
     m = store.get_mindset(mindset_id)
     if not m:
@@ -650,7 +650,7 @@ def initialise_mindset_full(m: Mindset) -> Mindset:
     return m
 
 
-def run_hunt(mindset_id: str, budget: int = None, hunt_id: str = None, include_new_sources: bool = False) -> Hunt:
+def run_hunt(mindset_id: str, budget: int = None, hunt_id: str = None, include_new_sources: bool = True) -> Hunt:
     store = get_store()
     m = store.get_mindset(mindset_id)
     if not m:
