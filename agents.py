@@ -241,6 +241,32 @@ def _liked_brief_for_scout(mindset_id: str, max_n: int = 6) -> str:
     return "\n".join(out)
 
 
+def _fallback_plan(m, budget: int, include_new_sources: bool) -> HuntPlan:
+    """A decent plan for when the scout LLM output can't be parsed: spread the
+    dossier's suggested queries (or the bare theme) across several broad, ready,
+    allowed sources, so a planning failure still yields varied, on-theme results
+    instead of five literal-theme searches."""
+    allowed = allowed_source_ids(include_new_sources)
+    priority = ["unsplash", "pexels", "pixabay", "wikimedia", "met", "nasa",
+                "smithsonian", "serpapi", "openverse", "gbif", "wellcome", "evident_ioty"]
+    pool = [s for s in priority if s in allowed and source_ready(s)[0]]
+    if not pool:
+        pool = [s for s in SEARCH_FUNCS if s in allowed and source_ready(s)[0]] or ["wikimedia"]
+    raw_qs = [m.theme] + (list(getattr(m.dossier, "suggested_queries", None) or []) if m.dossier else [])
+    seen, qs = set(), []
+    for q in raw_qs:
+        if q and q.lower() not in seen:
+            seen.add(q.lower()); qs.append(q)
+    # Aim for a useful spread even when few queries exist: cycle queries and
+    # sources independently so one theme word still fans out across sources.
+    count = min(budget, max(8, len(qs)))
+    searches = [
+        PlannedSearch(source_id=pool[i % len(pool)], query=qs[i % len(qs)], tactic="feature_term_query", why="fallback plan")
+        for i in range(count)
+    ]
+    return HuntPlan(searches=searches, reasoning="fallback plan (LLM response was unparseable)")
+
+
 def plan_hunt(mindset_id: str, budget: int = None, include_new_sources: bool = False) -> HuntPlan:
     store = get_store()
     m = store.get_mindset(mindset_id)
@@ -275,13 +301,8 @@ def plan_hunt(mindset_id: str, budget: int = None, include_new_sources: bool = F
             logging.info(f"plan_hunt: model build failed ({exc}); using fallback")
             data = None
     if not data:
-        plan = HuntPlan(searches=[
-            PlannedSearch(source_id="unsplash", query=m.theme, tactic="feature_term_query"),
-            PlannedSearch(source_id="met", query=m.theme, tactic="vintage_archive"),
-            PlannedSearch(source_id="nasa", query=m.theme, tactic="adjacent_theme"),
-            PlannedSearch(source_id="wikimedia", query=m.theme, tactic="feature_term_query"),
-            PlannedSearch(source_id="evident_ioty", query=m.theme, tactic="prizewinner_archive"),
-        ], reasoning="fallback plan (LLM response was unparseable)")
+        logging.info("plan_hunt: using fallback plan")
+        plan = _fallback_plan(m, budget, include_new_sources)
 
     # filter to known + allowed sources, dedup identical (source, query) pairs.
     # When include_new_sources is off, the planner shouldn't have picked a new
@@ -781,7 +802,10 @@ def _make_scout_agent():
     return LlmAgent(
         name="scout", model=GEMINI_MODEL, instruction=SCOUT_INSTRUCTION,
         output_schema=HuntPlan, output_key="hunt_plan",
-        generate_content_config=types.GenerateContentConfig(temperature=0.85, max_output_tokens=4000),
+        # A full {budget}-search plan (each search carries a "why" sentence and a
+        # "site") overflowed 4000 tokens and truncated -> unparseable -> the dumb
+        # fallback plan. 8000 gives comfortable headroom.
+        generate_content_config=types.GenerateContentConfig(temperature=0.85, max_output_tokens=8000),
     )
 
 
@@ -849,7 +873,7 @@ def scout_complete(prompt: str) -> str:
         model=GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
-            temperature=0.85, max_output_tokens=4000,
+            temperature=0.85, max_output_tokens=8000,
             response_mime_type="application/json", response_schema=HuntPlan,
         ),
     )
