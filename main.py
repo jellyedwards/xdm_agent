@@ -27,6 +27,7 @@ from rubric import initialise_mindset_rubric, reflect_rubric, record_feedback, d
 from agents import run_hunt, plan_hunt, build_adk_agents, build_dossier, initialise_mindset_full
 from sources import SOURCE_REGISTRY, source_ready
 import quota
+import billing
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -124,18 +125,40 @@ def assert_owner(m, request: Request, user: Optional[Dict[str, Any]]):
         raise HTTPException(404, "mindset not found")
 
 
-def public_gate(kind: str, request: Request, user: Optional[Dict[str, Any]]):
-    """Enforce access code + daily quota for expensive ops when PUBLIC_MODE is on.
+def _bearer_token(request: Request) -> str:
+    return (request.headers.get("Authorization") or "").split(" ", 1)[-1].strip()
+
+
+def public_gate(kind: str, request: Request, user: Optional[Dict[str, Any]],
+                idempotency_key: Optional[str] = None) -> Optional[int]:
+    """Free-tier / billing gate for expensive ops when PUBLIC_MODE is on.
+
+    Anyone gets a small free daily allowance per browser session. Signed-in
+    users pay for hunts with Design XDM credits (mindset ops stay free);
+    access codes (judges / demos) bypass both. Everything still counts toward
+    the global daily ceiling. Returns the xdm_server ledger id when the op was
+    paid with credits — so the caller can refund a failed run — else None.
     No-op for local/dev and trusted single-tenant deployments."""
     if not PUBLIC_MODE:
-        return
+        return None
     key, trusted = _session_key(request, user)
     code = (request.headers.get("X-Access-Code") or "").strip()
-    if not trusted and (not ACCESS_CODES or code not in ACCESS_CODES):
-        raise HTTPException(403, "this is a limited public demo — an access code is required to run the agent.")
+    if bool(ACCESS_CODES) and code in ACCESS_CODES:
+        ok, reason, _rem = quota.check_and_consume(key, kind, trusted=True)
+        if not ok:
+            raise HTTPException(429, reason)
+        return None
+    if trusted and kind == "hunt":
+        ok, reason, _rem = quota.check_and_consume(key, kind, trusted=True)
+        if not ok:
+            raise HTTPException(429, reason)
+        res = billing.charge(_bearer_token(request), kind, idempotency_key or new_id())
+        return res.get("ledger_id")
     ok, reason, _rem = quota.check_and_consume(key, kind, trusted=trusted)
     if not ok:
-        raise HTTPException(429, reason)
+        # 402 tells the UI the fix is signing in / topping up, not waiting.
+        raise HTTPException(429 if trusted else 402, reason)
+    return None
 
 app = FastAPI(title="xdm_agent", version="0.1.0")
 
@@ -226,15 +249,22 @@ def get_quota(request: Request, user: Optional[Dict[str, Any]] = Depends(verify_
         return {"public_mode": False}
     key, trusted = _session_key(request, user)
     code = (request.headers.get("X-Access-Code") or "").strip()
-    has_access = trusted or (bool(ACCESS_CODES) and code in ACCESS_CODES)
-    return {
+    bypass = bool(ACCESS_CODES) and code in ACCESS_CODES
+    out = {
         "public_mode": True,
         "trusted": trusted,
-        "has_access": has_access,
-        "hunts_remaining": -1 if trusted else quota.remaining(key, "hunt"),
-        "mindsets_remaining": -1 if trusted else quota.remaining(key, "mindset"),
+        "has_access": True,  # the agent is public now; kept for older UI builds
+        "hunts_remaining": -1 if (trusted or bypass) else quota.remaining(key, "hunt"),
+        "mindsets_remaining": -1 if (trusted or bypass) else quota.remaining(key, "mindset"),
         "daily_hunts": quota.DAILY_LIMITS["hunt"],
     }
+    if trusted and not bypass:
+        b = billing.balance(_bearer_token(request))
+        if b is not None:
+            cost = max(1, int((b.get("costs") or {}).get("hunt") or 1))
+            out["billing"] = {"balance": b.get("balance", 0), "hunt_cost": cost}
+            out["hunts_remaining"] = b.get("balance", 0) // cost
+    return out
 
 
 @app.post("/mindset")
@@ -311,10 +341,11 @@ def hunt(req: HuntReq, request: Request, user: Optional[Dict[str, Any]] = Depend
     if not m:
         raise HTTPException(404, "mindset not found")
     assert_owner(m, request, user)
-    public_gate("hunt", request, user)
     # Pre-create the Hunt record so we can return an id immediately and the
-    # client can poll while the background thread updates the trace.
+    # client can poll while the background thread updates the trace. Its id
+    # doubles as the billing idempotency key.
     h = Hunt(mindset_id=req.mindset_id)
+    ledger_id = public_gate("hunt", request, user, idempotency_key=h.id)
     h.status = "queued"
     h.trace.append({"t": now_iso(), "step": "queued"})
     store.save_hunt(h)
@@ -325,6 +356,8 @@ def hunt(req: HuntReq, request: Request, user: Optional[Dict[str, Any]] = Depend
                      include_new_sources=req.include_new_sources)
         except Exception as exc:
             logging.exception(f"background hunt {h.id} failed: {exc}")
+            if ledger_id:
+                billing.refund(ledger_id, reason=f"hunt {h.id} failed")
 
     threading.Thread(target=_run, daemon=True).start()
     return {"hunt_id": h.id, "mindset_id": req.mindset_id, "status": h.status}

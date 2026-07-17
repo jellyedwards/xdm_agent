@@ -16,10 +16,11 @@ import os
 import logging
 from datetime import datetime, timezone
 
-# Per-session daily caps by op kind. A "run" is a hunt.
+# Per-session daily caps by op kind. A "run" is a hunt. These are the free
+# anonymous allowance — signed-in users pay for hunts with Design XDM credits.
 DAILY_LIMITS = {
-    "hunt": int(os.getenv("QUOTA_DAILY_HUNTS", "20")),
-    "mindset": int(os.getenv("QUOTA_DAILY_MINDSETS", "20")),
+    "hunt": int(os.getenv("QUOTA_DAILY_HUNTS", "2")),
+    "mindset": int(os.getenv("QUOTA_DAILY_MINDSETS", "3")),
 }
 # Total expensive ops across all sessions per day — the hard wallet ceiling.
 DAILY_GLOBAL = int(os.getenv("QUOTA_DAILY_GLOBAL", "600"))
@@ -87,7 +88,7 @@ def check_and_consume(session_key, kind, trusted=False):
     if not trusted:
         if _get(f"sess:{session_key}:{kind}") >= limit:
             label = "runs" if kind == "hunt" else f"{kind}s"
-            return False, f"you've used your {limit} {label} for today — thanks for trying xdm_agent!", 0
+            return False, f"you've used your {limit} free {label} for today — sign in to continue and use Design XDM credits.", 0
     _incr("GLOBAL")
     if trusted:
         return True, "", -1

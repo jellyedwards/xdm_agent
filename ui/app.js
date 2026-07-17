@@ -54,12 +54,18 @@ const api = {
   },
 };
 
-// Quota / access-aware error surfacing. On 403 with no code yet, let the user
-// paste the access code they were given.
+// Quota / billing-aware error surfacing. 402 means the free daily runs are
+// used up (anonymous) or the credit balance is empty (signed in).
 function notifyError(e) {
-  if (e && e.status === 403 && !accessCode()) {
-    const c = prompt("This is a limited public demo.\nEnter the access code you were given:");
-    if (c && c.trim()) { localStorage.setItem("xdm_access_code", c.trim()); alert("Access code saved — please try again."); return; }
+  if (e && e.status === 402) {
+    if (window.agentAuth?.current?.()) {
+      if (confirm("You're out of Design XDM credits.\nBuy credits on Design XDM to keep hunting?"))
+        window.open("https://www.designxdm.com/credits", "_blank");
+    } else {
+      if (confirm("Sign in to continue and use Design XDM credits."))
+        window.agentAuth?.signIn?.().then(updateQuotaNote).catch(err => alert(err.message));
+    }
+    return;
   }
   alert(e && e.message ? e.message : String(e));
 }
@@ -69,7 +75,14 @@ async function updateQuotaNote() {
   if (!note) return;
   try {
     const q = await api.get("/quota");
-    note.textContent = (!q.public_mode || q.trusted) ? "" : `· ${q.hunts_remaining}/${q.daily_hunts} runs left today`;
+    if (!q.public_mode) { note.textContent = ""; return; }
+    if (q.billing) {
+      note.textContent = `· ${q.hunts_remaining} hunt${q.hunts_remaining === 1 ? "" : "s"} left (${q.billing.balance} credits)`;
+    } else if (!q.trusted && q.hunts_remaining >= 0) {
+      note.textContent = `· ${q.hunts_remaining}/${q.daily_hunts} free runs left today`;
+    } else {
+      note.textContent = "";
+    }
   } catch { note.textContent = ""; }
 }
 
