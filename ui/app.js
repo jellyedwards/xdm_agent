@@ -71,19 +71,20 @@ function notifyError(e) {
 }
 
 async function updateQuotaNote() {
-  const note = document.getElementById("quota-note");
-  if (!note) return;
+  const notes = document.querySelectorAll(".quota-note");
+  if (!notes.length) return;
+  const set = (t) => notes.forEach(n => { n.textContent = t; });
   try {
     const q = await api.get("/quota");
-    if (!q.public_mode) { note.textContent = ""; return; }
+    if (!q.public_mode) { set(""); return; }
     if (q.billing) {
-      note.textContent = `· ${q.hunts_remaining} hunt${q.hunts_remaining === 1 ? "" : "s"} left (${q.billing.balance} credits)`;
+      set(`· ${q.hunts_remaining} hunt${q.hunts_remaining === 1 ? "" : "s"} left (${q.billing.balance} credits)`);
     } else if (!q.trusted && q.hunts_remaining >= 0) {
-      note.textContent = `· ${q.hunts_remaining}/${q.daily_hunts} free runs left today`;
+      set(`· ${q.hunts_remaining}/${q.daily_hunts} free runs left today`);
     } else {
-      note.textContent = "";
+      set("");
     }
-  } catch { note.textContent = ""; }
+  } catch { set(""); }
 }
 
 const RIGHTS_LABEL = {
@@ -220,7 +221,7 @@ async function renderMindset(id) {
           el("input", { type: "checkbox", id: "new-sources-check", checked: true }),
           el("span", {}, "include new sources"),
         ),
-        el("span", { id: "quota-note", class: "theme" }, ""),
+        el("span", { class: "theme quota-note" }, ""),
       ),
     )
   ));
@@ -734,12 +735,14 @@ function renderUser(u) {
     if (u) $userSlot.appendChild(el("span", { class: "user-info" }, "as ", el("b", {}, u.email || u.displayName || "you")));
     return;
   }
+  $userSlot.appendChild(el("span", { class: "theme quota-note" }, ""));
   if (u) {
     $userSlot.appendChild(el("span", { class: "user-info" }, "signed in as ", el("b", {}, u.email || u.displayName || "you")));
     $userSlot.appendChild(el("button", { onClick: () => window.agentAuth.signOut() }, "sign out"));
   } else {
     $userSlot.appendChild(el("button", { class: "primary", onClick: () => window.agentAuth.signIn().catch(e => alert(e.message)) }, "sign in with design xdm"));
   }
+  updateQuotaNote();
 }
 
 async function bootstrap() {
