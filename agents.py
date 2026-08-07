@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import random
 import time
 import asyncio
 from datetime import datetime, timezone
@@ -37,6 +38,8 @@ CURATE_DIVERSITY_THRESHOLD = int(os.getenv("CURATE_DIVERSITY_THRESHOLD", "4"))
 # subset before judging. Anything trimmed isn't persisted, so it can resurface
 # and be judged in a later hunt.
 MAX_JUDGE_PER_HUNT = int(os.getenv("MAX_JUDGE_PER_HUNT", "40"))
+# Retries per candidate when Gemini answers 429 (backoff ~5s/10s/20s + jitter).
+JUDGE_QUOTA_RETRIES = int(os.getenv("JUDGE_QUOTA_RETRIES", "3"))
 
 
 class PlannedSearch(BaseModel):
@@ -880,11 +883,12 @@ def scout_complete(prompt: str) -> str:
     return resp.text or ""
 
 
-def judge_complete(rubric: str, image_url: str) -> str:
-    """Judge reasoning for one image. Routes through the ADK runner; falls back to
-    a direct google-genai call if ADK is disabled or errors. Returns raw JSON text."""
-    prompt = JUDGE_PROMPT.format(rubric=rubric)
-    image_part = types.Part.from_uri(file_uri=image_url, mime_type="image/jpeg")
+def _rate_limited(exc: Exception) -> bool:
+    s = str(exc)
+    return "RESOURCE_EXHAUSTED" in s or "429" in s
+
+
+def _judge_once(image_part, prompt: str) -> str:
     if USE_ADK:
         try:
             build_adk_agents()
@@ -893,6 +897,8 @@ def judge_complete(rubric: str, image_url: str) -> str:
                 return txt
             logging.info("judge: ADK returned empty; falling back to direct genai")
         except Exception as exc:
+            if _rate_limited(exc):
+                raise  # falling back would just double the 429 traffic
             logging.warning(f"judge: ADK path failed ({exc}); falling back to direct genai")
     resp = gemini_client().models.generate_content(
         model=GEMINI_MODEL,
@@ -903,3 +909,20 @@ def judge_complete(rubric: str, image_url: str) -> str:
         ),
     )
     return resp.text or ""
+
+
+def judge_complete(rubric: str, image_url: str) -> str:
+    """Judge reasoning for one image. Routes through the ADK runner; falls back to
+    a direct google-genai call if ADK is disabled or errors. Backs off and retries
+    when Gemini rate-limits instead of failing the candidate. Returns raw JSON text."""
+    prompt = JUDGE_PROMPT.format(rubric=rubric)
+    image_part = types.Part.from_uri(file_uri=image_url, mime_type="image/jpeg")
+    for attempt in range(JUDGE_QUOTA_RETRIES + 1):
+        try:
+            return _judge_once(image_part, prompt)
+        except Exception as exc:
+            if not _rate_limited(exc) or attempt == JUDGE_QUOTA_RETRIES:
+                raise
+            delay = min(60.0, 5.0 * 2**attempt) * (1.0 + random.random() * 0.25)
+            logging.info(f"judge rate-limited; retry {attempt + 1}/{JUDGE_QUOTA_RETRIES} in {delay:.0f}s")
+            time.sleep(delay)
