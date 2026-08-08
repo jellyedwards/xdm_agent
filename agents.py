@@ -4,6 +4,7 @@ import logging
 import random
 import time
 import asyncio
+import httpx
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Tuple
@@ -911,12 +912,26 @@ def _judge_once(image_part, prompt: str) -> str:
     return resp.text or ""
 
 
+def _fetch_image(url: str, timeout: float = 15.0, max_bytes: int = 8_000_000) -> types.Part:
+    with httpx.Client(follow_redirects=True, timeout=timeout) as c:
+        r = c.get(url, headers={"User-Agent": "xdm-agent/0.1"})
+        r.raise_for_status()
+    if len(r.content) > max_bytes:
+        raise Exception(f"image too large ({len(r.content)}b): {url}")
+    mime = r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+    if not mime.startswith("image/"):
+        raise Exception(f"not an image ({mime}): {url}")
+    return types.Part.from_bytes(data=r.content, mime_type=mime)
+
+
 def judge_complete(rubric: str, image_url: str) -> str:
     """Judge reasoning for one image. Routes through the ADK runner; falls back to
     a direct google-genai call if ADK is disabled or errors. Backs off and retries
     when Gemini rate-limits instead of failing the candidate. Returns raw JSON text."""
     prompt = JUDGE_PROMPT.format(rubric=rubric)
-    image_part = types.Part.from_uri(file_uri=image_url, mime_type="image/jpeg")
+    # Inline bytes, not from_uri: Gemini's remote-URL fetch has its own (tight)
+    # quota bucket and 429s long before the request-per-minute limit.
+    image_part = _fetch_image(image_url)
     for attempt in range(JUDGE_QUOTA_RETRIES + 1):
         try:
             return _judge_once(image_part, prompt)
