@@ -2,6 +2,7 @@ import io
 import re
 import logging
 import hashlib
+from typing import Tuple
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 import httpx
 
@@ -41,9 +42,56 @@ def url_fingerprint(url: str) -> str:
     return hashlib.sha1(canonicalise_url(url).encode("utf-8")).hexdigest()
 
 
+# Wikimedia's UA policy throttles generic/library agents; identify with a contact.
+IMAGE_FETCH_UA = "xdm-agent/0.1 (+https://designxdm.com; contact noc@designxdm.com)"
+
+# /wikipedia/<project>/<a>/<ab>/<filename> — the layout of an *original* Commons file.
+_WM_ORIG_RE = re.compile(r"^/wikipedia/[^/]+/[0-9a-f]/[0-9a-f]{2}/([^/]+)$")
+
+
+def wikimedia_thumb_url(url: str, width: int = 1024) -> str:
+    """Route an upload.wikimedia.org *original* file URL through Special:FilePath at a
+    capped width. Wikimedia 429s bulk fetches of originals and asks clients to use
+    thumbnails; FilePath serves a width-scaled derivative from the thumb CDN, and
+    gracefully falls back to the original when the source is narrower than `width`
+    (a direct /thumb/ URL would 400 there). No-op for other hosts or /thumb/ URLs."""
+    try:
+        p = urlparse(url)
+    except Exception:
+        return url
+    if p.netloc != "upload.wikimedia.org" or "/thumb/" in p.path:
+        return url
+    m = _WM_ORIG_RE.match(p.path)
+    if not m:
+        return url
+    fname = m.group(1)  # last path segment, already percent-encoded
+    return f"https://commons.wikimedia.org/wiki/Special:FilePath/{fname}?width={width}"
+
+
+def downscale_to_jpeg(data: bytes, max_edge: int = 768, quality: int = 85) -> Tuple[bytes, str]:
+    """Shrink so the longest edge is <= max_edge and re-encode as JPEG, keeping
+    vision-model input to a single tile (cheapest token tier). Returns the original
+    bytes untouched if PIL is unavailable or the image can't be decoded."""
+    if not _HAS_IMAGEHASH:  # PIL rides in alongside imagehash
+        return data, "image/jpeg"
+    try:
+        img = Image.open(io.BytesIO(data))
+        try:
+            img.draft("RGB", (max_edge, max_edge))
+        except Exception:
+            pass
+        img = img.convert("RGB")
+        img.thumbnail((max_edge, max_edge))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return data, "image/jpeg"
+
+
 def fetch_thumb(url: str, timeout: float = 6.0, max_bytes: int = 800_000) -> bytes:
     with httpx.Client(follow_redirects=True, timeout=timeout) as c:
-        r = c.get(url, headers={"User-Agent": "xdm-agent/0.1"})
+        r = c.get(wikimedia_thumb_url(url), headers={"User-Agent": IMAGE_FETCH_UA})
         if r.status_code >= 400:
             raise Exception(f"thumb fetch {r.status_code}: {url}")
         data = r.content

@@ -352,8 +352,11 @@ def hunt(req: HuntReq, request: Request, user: Optional[Dict[str, Any]] = Depend
 
     def _run():
         try:
-            run_hunt(req.mindset_id, budget=req.budget, hunt_id=h.id,
-                     include_new_sources=req.include_new_sources)
+            result = run_hunt(req.mindset_id, budget=req.budget, hunt_id=h.id,
+                              include_new_sources=req.include_new_sources)
+            # Don't charge for a hunt that surfaced nothing — refund the credits.
+            if ledger_id and (result.n_kept or 0) == 0:
+                billing.refund(ledger_id, reason=f"hunt {h.id} kept 0 images")
         except Exception as exc:
             logging.exception(f"background hunt {h.id} failed: {exc}")
             if ledger_id:

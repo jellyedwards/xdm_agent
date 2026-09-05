@@ -15,7 +15,10 @@ from dotenv import load_dotenv
 
 from storage import Mindset, Candidate, Hunt, ThemeDossier, get_store, now_iso, new_id
 from sources import SOURCE_REGISTRY, SEARCH_FUNCS, run_source, FALLBACK_SOURCES, source_ready, domain_of, allowed_source_ids
-from dedup import canonicalise_url, url_fingerprint, phash_url, is_near_duplicate
+from dedup import (
+    canonicalise_url, url_fingerprint, phash_url, is_near_duplicate,
+    wikimedia_thumb_url, downscale_to_jpeg, IMAGE_FETCH_UA,
+)
 from rubric import gemini_client, GEMINI_MODEL, GEMINI_MODEL_LITE, TACTICS, default_tactic_prefs, initialise_mindset_rubric, reflect_if_pending
 
 load_dotenv()
@@ -41,6 +44,11 @@ CURATE_DIVERSITY_THRESHOLD = int(os.getenv("CURATE_DIVERSITY_THRESHOLD", "4"))
 MAX_JUDGE_PER_HUNT = int(os.getenv("MAX_JUDGE_PER_HUNT", "40"))
 # Retries per candidate when Gemini answers 429 (backoff ~5s/10s/20s + jitter).
 JUDGE_QUOTA_RETRIES = int(os.getenv("JUDGE_QUOTA_RETRIES", "3"))
+# Longest edge (px) of the image sent to the judge. 768 = a single Gemini vision
+# tile (~258 tokens), the cheapest tier; larger just adds tiles/cost for no gain.
+JUDGE_MAX_EDGE = int(os.getenv("JUDGE_MAX_EDGE", "768"))
+# Retries when the image *fetch* (not Gemini) is rate-limited, e.g. Wikimedia 429.
+IMG_FETCH_RETRIES = int(os.getenv("IMG_FETCH_RETRIES", "2"))
 
 
 class PlannedSearch(BaseModel):
@@ -913,15 +921,28 @@ def _judge_once(image_part, prompt: str) -> str:
 
 
 def _fetch_image(url: str, timeout: float = 15.0, max_bytes: int = 8_000_000) -> types.Part:
-    with httpx.Client(follow_redirects=True, timeout=timeout) as c:
-        r = c.get(url, headers={"User-Agent": "xdm-agent/0.1"})
-        r.raise_for_status()
+    # Wikimedia originals 429 under load; fetch a thumb. Others fetch as-is and
+    # get downscaled locally below so the judge only ever sees a single-tile image.
+    fetch_url = wikimedia_thumb_url(url, width=JUDGE_MAX_EDGE)
+    for attempt in range(IMG_FETCH_RETRIES + 1):
+        try:
+            with httpx.Client(follow_redirects=True, timeout=timeout) as c:
+                r = c.get(fetch_url, headers={"User-Agent": IMAGE_FETCH_UA})
+                r.raise_for_status()
+            break
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 429 or attempt == IMG_FETCH_RETRIES:
+                raise
+            delay = min(30.0, 2.0 * 2**attempt) * (1.0 + random.random() * 0.25)
+            logging.info(f"image fetch rate-limited ({fetch_url}); retry {attempt + 1}/{IMG_FETCH_RETRIES} in {delay:.0f}s")
+            time.sleep(delay)
     if len(r.content) > max_bytes:
         raise Exception(f"image too large ({len(r.content)}b): {url}")
     mime = r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
     if not mime.startswith("image/"):
         raise Exception(f"not an image ({mime}): {url}")
-    return types.Part.from_bytes(data=r.content, mime_type=mime)
+    data, mime = downscale_to_jpeg(r.content, max_edge=JUDGE_MAX_EDGE)
+    return types.Part.from_bytes(data=data, mime_type=mime)
 
 
 def judge_complete(rubric: str, image_url: str) -> str:

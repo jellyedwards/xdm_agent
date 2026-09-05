@@ -538,6 +538,7 @@ def search_wikimedia(mindset_id: str, query: str, n: int = 10) -> List[Candidate
         params={
             "action": "query", "format": "json", "generator": "search",
             "gsrsearch": f"{query} filetype:bitmap", "gsrlimit": min(n * 2, 50),
+            "gsrnamespace": 6,  # File: namespace — without this, search hits main ns and returns nothing
             "prop": "imageinfo", "iiprop": "url|extmetadata|user", "iiurlwidth": 1024,
         },
         headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT,
@@ -596,6 +597,7 @@ def search_google_cse(mindset_id: str, query: str, n: int = 10) -> List[Candidat
         host = urllib.parse.urlparse(page).hostname or ""
         out.append(_candidate(
             mindset_id, "google_cse", u, page,
+            thumbnail_url=(it.get("image") or {}).get("thumbnailLink"),
             title=it.get("title", ""),
             attribution=_attribution("google_cse", source_host=host),
         ))
@@ -916,6 +918,7 @@ def search_openverse(mindset_id: str, query: str, n: int = 10) -> List[Candidate
         creator = rec.get("creator") or rec.get("source") or "Openverse"
         out.append(_candidate(
             mindset_id, "openverse", u, rec.get("foreign_landing_url") or "",
+            thumbnail_url=rec.get("thumbnail"),
             creator_url=rec.get("creator_url"),
             title=title, creator=creator,
             license_name=lic or SOURCE_REGISTRY["openverse"]["license_default"],
