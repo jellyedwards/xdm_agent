@@ -47,9 +47,9 @@ Each row is a candidate source for the curator to hunt across. The registry in `
 
 | Source | Type | Notes |
 |---|---|---|
-| Google CSE | API | Image search via Custom Search; configured CSE handles SafeSearch |
+| ~~Google CSE~~ | — | **Removed 2026-09-10** — the design-xdm-1 project lacks Custom Search JSON API access (persistent `PERMISSION_DENIED`, unfixable via gcloud), and it was CC-only so it couldn't surface gallery/competition work. serpapi now carries the web/gallery route. |
 | Vertex AI Search | API | Google's grounding-ready search; gives us licence-respectful image search with Google Cloud lineage (good challenge story) |
-| SerpAPI | API | Fallback for Google Images-style queries; per-result attribution |
+| SerpAPI | API | Primary web route: Google Images-style queries; results kept as "caveat" (verify per item). site:-scope to a competition/gallery/creator domain to reach curated work. |
 | Brave Search | API | Independent index; helps discover sources Google deprioritises |
 
 For web search results, RightsAgent must do per-page licence detection — these don't carry licence in the search response.

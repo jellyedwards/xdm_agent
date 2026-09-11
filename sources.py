@@ -188,15 +188,6 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
         "search_hint": "weak fuzzy match: 2-3 short noun keywords or tags, not long descriptive phrases",
         "requires_env": ["FLICKR_API_KEY"],
     },
-    "google_cse": {
-        "display_name": "Google Search", "kind": "web", "hotlink_ok": False,
-        "license_default": "Creative Commons / public domain (CC-filtered) — verify per item",
-        "license_url": None,
-        "attribution_template": "via {source_host}",
-        "rights_status_default": "caveat",
-        "search_hint": "broad web, CC-filtered: evocative or very specific phrases both fine; good for named subjects",
-        "requires_env": ["GOOGLE_CSE_API_KEY", "GOOGLE_CSE_CX"],
-    },
     "vertex_search": {
         "display_name": "Vertex AI Search", "kind": "web", "hotlink_ok": False,
         "license_default": "Unknown — Vertex AI Search",
@@ -208,11 +199,15 @@ SOURCE_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "serpapi": {
         "display_name": "Web search", "kind": "web", "hotlink_ok": False,
-        "license_default": "Unknown — web search",
+        "license_default": "Web search result — rights unverified, verify per item",
         "license_url": None,
         "attribution_template": "via {source_host}",
-        "rights_status_default": "unknown",
-        "search_hint": "broad web: evocative or specific phrases fine; best for specific named subjects (rights unknown — site:-scope to a curated domain to mark editorial)",
+        # "caveat" (verify per item), not "unknown": web results are the only route
+        # to galleries/competitions/creator portfolios the dossier surfaces, and
+        # apply_rights drops "unknown" outright — which silently discarded every
+        # non-site-scoped serpapi hit before it could be judged.
+        "rights_status_default": "caveat",
+        "search_hint": "broad web: evocative or specific phrases fine; best for named subjects, galleries and creators. site:-scope to a curated domain (competition/gallery/portfolio) whenever you have one — it sharpens results and flags them as editorial.",
         "requires_env": ["SERPAPI_API_KEY"],
     },
     "evident_ioty": {
@@ -564,42 +559,6 @@ def search_wikimedia(mindset_id: str, query: str, n: int = 10) -> List[Candidate
             license_name=lic or SOURCE_REGISTRY["wikimedia"]["license_default"],
             rights_status=rights,
             attribution=_attribution("wikimedia", title=title, creator=creator),
-        ))
-        if len(out) >= n:
-            break
-    return out
-
-
-def search_google_cse(mindset_id: str, query: str, n: int = 10) -> List[Candidate]:
-    logging.info(f"search_google_cse: {query=} {n=}")
-    key = os.environ.get("GOOGLE_CSE_API_KEY")
-    cx = os.environ.get("GOOGLE_CSE_CX")
-    if not key or not cx:
-        return []
-    r = requests.get(
-        "https://www.googleapis.com/customsearch/v1",
-        params={
-            "key": key, "cx": cx, "q": query, "searchType": "image",
-            "num": min(max(n, 1), 10), "safe": "active",
-            "rights": "cc_publicdomain,cc_attribute,cc_sharealike",
-        },
-        headers={"User-Agent": UA}, timeout=HTTP_TIMEOUT,
-    )
-    if r.status_code != 200:
-        logging.info(f"cse {r.status_code}: {r.text[:200]}")
-        return []
-    out = []
-    for it in r.json().get("items", []) or []:
-        u = it.get("link")
-        if not u:
-            continue
-        page = (it.get("image") or {}).get("contextLink") or ""
-        host = urllib.parse.urlparse(page).hostname or ""
-        out.append(_candidate(
-            mindset_id, "google_cse", u, page,
-            thumbnail_url=(it.get("image") or {}).get("thumbnailLink"),
-            title=it.get("title", ""),
-            attribution=_attribution("google_cse", source_host=host),
         ))
         if len(out) >= n:
             break
@@ -1316,7 +1275,6 @@ SEARCH_FUNCS = {
     "harvard": search_harvard,
     "bhl": search_bhl,
     "flickr": search_flickr,
-    "google_cse": search_google_cse,
     "vertex_search": search_vertex_search,
     "serpapi": search_serpapi,
     "evident_ioty": search_evident_ioty,
@@ -1339,18 +1297,18 @@ def allowed_source_ids(include_new: bool) -> set:
     return allowed if include_new else (allowed - NEW_SOURCES)
 
 
-# Broad catch-all sources (in order) used to back-fill a 0-hit search — see
-# agents.execute_searches. Keyless openverse/wikimedia first (their per-item
-# rights survive rights-filtering), then the CC-filtered web search. serpapi is
-# intentionally excluded: its results are rights_status "unknown" and would be
-# dropped before judging.
-FALLBACK_SOURCES = ["openverse", "wikimedia", "google_cse"]
+# Broad catch-all sources (in order) used to back-fill a 0-hit *non-gallery*
+# search — see agents.execute_searches. Both keyless (their per-item rights
+# survive rights-filtering). serpapi is intentionally excluded here: gallery-
+# intent 0-hits are backfilled onto serpapi separately (agents.GALLERY_TACTICS),
+# and we don't want to spend serpapi quota broadening every museum 0-hit.
+FALLBACK_SOURCES = ["openverse", "wikimedia"]
 
 # Sources backed by Google web search, whose query string understands the
 # `site:` operator — so a domain scope can be composed in without changing the
 # per-source function signature. (Vertex AI Search is excluded: its Discovery
 # Engine endpoint takes structured filters, not inline site: operators.)
-_SITE_SCOPED_SOURCES = {"serpapi", "google_cse"}
+_SITE_SCOPED_SOURCES = {"serpapi"}
 
 
 def domain_of(url_or_host: str) -> str:
@@ -1379,11 +1337,10 @@ def run_source(source_id: str, mindset_id: str, query: str, n: int = 10, site: s
         return []
     if site_scoped:
         # A site:-scoped web search targets a curated domain (e.g. a competition
-        # gallery), so results are editorial — mark them "caveat" (verify per
-        # item) rather than the web source's default "unknown", which would be
-        # dropped by apply_rights before judging.
+        # gallery or a creator's portfolio), so label the results as editorial
+        # from that domain. (Both scoped and unscoped web results are already
+        # "caveat" by default; this just gives the scoped ones a sharper label.)
         for c in got:
             c.rights_status = "caveat"
-            if not c.license_name or "unknown" in c.license_name.lower():
-                c.license_name = f"Editorial / curated source — verify per item ({dom})"
+            c.license_name = f"Editorial / curated source — verify per item ({dom})"
     return got

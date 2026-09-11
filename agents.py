@@ -49,6 +49,10 @@ JUDGE_QUOTA_RETRIES = int(os.getenv("JUDGE_QUOTA_RETRIES", "3"))
 JUDGE_MAX_EDGE = int(os.getenv("JUDGE_MAX_EDGE", "768"))
 # Retries when the image *fetch* (not Gemini) is rate-limited, e.g. Wikimedia 429.
 IMG_FETCH_RETRIES = int(os.getenv("IMG_FETCH_RETRIES", "2"))
+# Tactics whose searches target curated galleries / competitions / creator
+# portfolios. When one of these comes up empty it's backfilled onto the open web
+# (serpapi), not stock/CC — see _run_fallback_searches.
+GALLERY_TACTICS = {"prizewinner_archive", "creator_pursuit"}
 
 
 class PlannedSearch(BaseModel):
@@ -57,8 +61,8 @@ class PlannedSearch(BaseModel):
     tactic: str
     why: str = ""
     # Optional domain to site:-scope a web search to (e.g. "nikonsmallworld.com").
-    # Only honoured by the Google-backed web sources (serpapi/google_cse);
-    # ignored elsewhere. Used by the prizewinner_archive tactic to pull from
+    # Only honoured by the web source (serpapi); ignored elsewhere.
+    # Used by the prizewinner_archive tactic to pull from
     # competition sites the dossier surfaced.
     site: str = ""
 
@@ -112,7 +116,7 @@ PRODUCE A HUNT PLAN. Return a JSON object matching this schema:
       "query": "<the exact query string to send to that source>",
       "tactic": "<one of the tactic names>",
       "why": "<one sentence on why this combination>",
-      "site": "<OPTIONAL domain to restrict a WEB search to, e.g. nikonsmallworld.com — use only with web sources (serpapi/google_cse), mainly for prizewinner_archive; leave empty otherwise>"
+      "site": "<OPTIONAL domain to restrict a WEB search to, e.g. nikonsmallworld.com — use only with the web source (serpapi), mainly for prizewinner_archive; leave empty otherwise>"
     }}
   ]
 }}
@@ -120,11 +124,12 @@ PRODUCE A HUNT PLAN. Return a JSON object matching this schema:
 Rules:
 - Produce {budget} searches.
 - Use the dossier's suggested queries and known competitions/creators as seed material, but invent variations and new angles too — don't just copy them.
-- Phrase every query for the source it targets, honouring that source's "how to query it" hint. Keyword/museum/scientific APIs (e.g. met, smithsonian, wikimedia, gbif, bhl, rijksmuseum, flickr) only match literal, short noun terms — metaphors and long evocative phrases return ZERO results there. Save metaphors, technique names, material descriptors and other evocative phrasing for the stock and web sources (e.g. unsplash, pexels, serpapi, google_cse) that tolerate it. The same concept should be worded differently depending on which source you send it to.
+- Phrase every query for the source it targets, honouring that source's "how to query it" hint. Keyword/museum/scientific APIs (e.g. met, smithsonian, wikimedia, gbif, bhl, rijksmuseum, flickr) only match literal, short noun terms — metaphors and long evocative phrases return ZERO results there. Save metaphors, technique names, material descriptors and other evocative phrasing for the stock and web sources (e.g. unsplash, pexels, serpapi) that tolerate it. The same concept should be worded differently depending on which source you send it to.
 - Don't just fire the theme word itself; still aim for striking, non-obvious angles — but express them in each source's native vocabulary.
 - If LIKED IMAGES are listed, dedicate at least 2 searches to finding more in their vein — try the creator_pursuit tactic on their creators, or queries that capture what made them strong.
 - Use a mix of sources matching the tactic. Competition archives for prizewinner_archive. Museums for vintage_archive. Stock + web for feature_term_query. Web for adjacent_theme. Etc.
-- For the prizewinner_archive tactic, set source_id to "serpapi" and set "site" to a competition's domain from the dossier (shown as "site: <domain>") so the search is scoped to that competition's own gallery. (Use serpapi rather than google_cse here — google_cse only returns Creative-Commons images, which competition winners usually are not.) Leave "site" empty for every other tactic and source.
+- Web-search results (serpapi) are kept for judging, not discarded — so serpapi is the way to reach the galleries, competitions and creator portfolios the dossier surfaces. Use it whenever a specific named source would have the best work.
+- IMPORTANT — always site:-scope a web search to a specific domain when you have one. Whenever your query targets a named competition, gallery, archive, or a creator's own portfolio, set source_id to "serpapi" and set "site" to that domain (a competition's domain from the dossier shown as "site: <domain>", or a creator's/gallery's site). This applies to prizewinner_archive AND creator_pursuit AND any feature_term_query aimed at a specific named source — not just prizewinner_archive. An unscoped web search for "{{creator}} {{subject}}" scatters across the whole web; site:theirsite.com pulls their actual work. Leave "site" empty only when you genuinely have no target domain.
 - Serendipity dial is {serendipity:.2f} — at high values, include 1-2 deliberately surprising probes (e.g. negative_space_probe).
 - Each query should plausibly return images this rubric would score well.
 
@@ -389,8 +394,22 @@ def _run_fallback_searches(mindset_id: str, zero_hits: List[PlannedSearch], trie
     by the number of fallback jobs so the UI progress counter stays coherent.
     """
     jobs: List[Tuple[PlannedSearch, str]] = []
+    gallery_serpapi_qs: set = set()   # dedup open-web broadenings by query
     for s in zero_hits:
         tried = tried_by_query.setdefault(s.query.lower(), set())
+        # Gallery-intent 0-hit (a competition/creator search that came up empty):
+        # broaden to the open web via serpapi rather than backfilling from stock/CC,
+        # which would bury the gallery angle under generic photos. Skip if the open
+        # web was already searched unscoped for this query — nothing more to try.
+        if s.tactic in GALLERY_TACTICS:
+            already_open_web = s.source_id == "serpapi" and not (getattr(s, "site", "") or "")
+            q = s.query.lower()
+            if (not already_open_web and "serpapi" in SEARCH_FUNCS and q not in gallery_serpapi_qs
+                    and (allowed_sources is None or "serpapi" in allowed_sources)
+                    and source_ready("serpapi")[0]):
+                jobs.append((s, "serpapi"))
+                gallery_serpapi_qs.add(q)
+            continue   # gallery intent never falls back to stock/CC
         for fb in FALLBACK_SOURCES:
             if fb in tried:
                 continue
