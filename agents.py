@@ -49,6 +49,10 @@ JUDGE_QUOTA_RETRIES = int(os.getenv("JUDGE_QUOTA_RETRIES", "3"))
 JUDGE_MAX_EDGE = int(os.getenv("JUDGE_MAX_EDGE", "768"))
 # Retries when the image *fetch* (not Gemini) is rate-limited, e.g. Wikimedia 429.
 IMG_FETCH_RETRIES = int(os.getenv("IMG_FETCH_RETRIES", "2"))
+# Sampling temperatures, env-overridable so the two systems can be compared at
+# matched settings without editing literals. Defaults are unchanged.
+SCOUT_TEMPERATURE = float(os.getenv("SCOUT_TEMPERATURE", "0.85"))
+JUDGE_TEMPERATURE = float(os.getenv("JUDGE_TEMPERATURE", "0.3"))
 # Tactics whose searches target curated galleries / competitions / creator
 # portfolios. When one of these comes up empty it's backfilled onto the open web
 # (serpapi), not stock/CC — see _run_fallback_searches.
@@ -836,7 +840,7 @@ def _make_scout_agent():
         # A full {budget}-search plan (each search carries a "why" sentence and a
         # "site") overflowed 4000 tokens and truncated -> unparseable -> the dumb
         # fallback plan. 8000 gives comfortable headroom.
-        generate_content_config=types.GenerateContentConfig(temperature=0.85, max_output_tokens=8000),
+        generate_content_config=types.GenerateContentConfig(temperature=SCOUT_TEMPERATURE, max_output_tokens=8000),
     )
 
 
@@ -844,7 +848,7 @@ def _make_judge_agent():
     return LlmAgent(
         name="judge", model=GEMINI_MODEL, instruction=JUDGE_INSTRUCTION,
         output_schema=JudgeResult, output_key="judge_result",
-        generate_content_config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1400),
+        generate_content_config=types.GenerateContentConfig(temperature=JUDGE_TEMPERATURE, max_output_tokens=1400),
     )
 
 
@@ -904,7 +908,7 @@ def scout_complete(prompt: str) -> str:
         model=GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
-            temperature=0.85, max_output_tokens=8000,
+            temperature=SCOUT_TEMPERATURE, max_output_tokens=8000,
             response_mime_type="application/json", response_schema=HuntPlan,
         ),
     )
@@ -932,7 +936,7 @@ def _judge_once(image_part, prompt: str) -> str:
         model=GEMINI_MODEL,
         contents=[image_part, prompt],
         config=types.GenerateContentConfig(
-            temperature=0.3, max_output_tokens=1400,
+            temperature=JUDGE_TEMPERATURE, max_output_tokens=1400,
             response_mime_type="application/json", response_schema=JudgeResult,
         ),
     )
